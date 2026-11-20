@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, w
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { buildPdf } from '../../../tests/fixtures/pdf'
 import { getBook, listBooks } from '../db/queries/books'
 import { closeLibrary, openLibrary } from '../library/service'
 import { setSetting } from '../library/settings'
@@ -15,7 +16,7 @@ function tempDir(): string {
   return dir
 }
 
-function sourceFile(dir: string, name: string, content = 'pdf-bytes'): string {
+function sourceFile(dir: string, name: string, content: string | Buffer = buildPdf()): string {
   const path = join(dir, name)
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, content)
@@ -33,7 +34,11 @@ describe('importBooks', () => {
     const root = tempDir()
     const source = tempDir()
     const library = openLibrary(root)
-    const path = sourceFile(source, 'The Name of the Rose.pdf', 'rose')
+    const path = sourceFile(
+      source,
+      'The Name of the Rose.pdf',
+      buildPdf({ title: 'The Name of the Rose', author: 'Umberto Eco' })
+    )
 
     const result = await importBooks([path])
 
@@ -57,15 +62,16 @@ describe('importBooks', () => {
     expect(book.relPath).toMatch(/^books\//)
     expect(book.filePath).toBe(join(root, book.relPath ?? ''))
     expect(existsSync(book.filePath)).toBe(true)
-    expect(readFileSync(book.filePath, 'utf8')).toBe('rose')
+    expect(readFileSync(book.filePath).subarray(0, 5).toString()).toBe('%PDF-')
   })
 
   it('deduplicates identical content across different files and names', async () => {
     const root = tempDir()
     const source = tempDir()
     const library = openLibrary(root)
-    const first = sourceFile(source, 'first.pdf', 'same-content')
-    const second = sourceFile(source, 'second.pdf', 'same-content')
+    const content = buildPdf({ title: 'Shared' })
+    const first = sourceFile(source, 'first.pdf', content)
+    const second = sourceFile(source, 'second.pdf', content)
 
     const firstRun = await importBooks([first])
     const secondRun = await importBooks([second])
@@ -86,7 +92,7 @@ describe('importBooks', () => {
     const source = tempDir()
     const library = openLibrary(root)
     setSetting(library.db, 'import.storage', 'link')
-    const path = sourceFile(source, 'Linked.pdf', 'linked')
+    const path = sourceFile(source, 'Linked.pdf', buildPdf({ title: 'Linked' }))
 
     const result = await importBooks([path])
 
@@ -107,7 +113,7 @@ describe('importBooks', () => {
     const root = tempDir()
     const source = tempDir()
     const library = openLibrary(root)
-    const path = sourceFile(source, 'Portable.pdf', 'portable')
+    const path = sourceFile(source, 'Portable.pdf', buildPdf({ title: 'Portable' }))
 
     const result = await importBooks([path])
     const bookId = result.outcomes[0].bookId
@@ -126,17 +132,38 @@ describe('importBooks', () => {
     expect(existsSync(relocated?.filePath ?? '')).toBe(true)
   })
 
-  it('refuses office files until conversion exists and reports missing files', async () => {
+  it('reports missing files without aborting the queue', async () => {
     const root = tempDir()
     const source = tempDir()
     openLibrary(root)
-    const office = sourceFile(source, 'deck.pptx', 'pptx')
 
-    const result = await importBooks([office, join(source, 'missing.pdf')])
+    const result = await importBooks([join(source, 'missing.pdf'), join(source, 'gone.pdf')])
 
     expect(result.imported).toBe(0)
     expect(result.failed).toBe(2)
-    expect(result.outcomes[0].message).toContain('conversion is not available')
+    expect(result.outcomes[0].message).toBe('File could not be read')
     expect(result.outcomes[1].message).toBe('File could not be read')
+  })
+
+  it('converts office documents when LibreOffice is available', async () => {
+    const root = tempDir()
+    const source = tempDir()
+    const library = openLibrary(root)
+    const office = sourceFile(source, 'deck.pptx', 'not-a-real-presentation')
+
+    const result = await importBooks([office])
+    const outcome = result.outcomes[0]
+
+    if (result.imported === 0) {
+      expect(outcome.message).toMatch(/LibreOffice|conversion/i)
+      return
+    }
+
+    expect(outcome.status).toBe('imported')
+    const book = listBooks(library.db)[0]
+    expect(book.originalFormat).toBe('pptx')
+    expect(book.format).toBe('pdf')
+    expect(book.filePath.toLowerCase().endsWith('.pdf')).toBe(true)
+    expect(existsSync(join(root, 'cache', 'converted'))).toBe(true)
   })
 })

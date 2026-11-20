@@ -1,6 +1,6 @@
-import { dialog, ipcMain } from 'electron'
+import { dialog, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { ImportScanResult } from '../../shared/types'
-import { IPC } from '../../shared/ipc'
+import { EVENT, IPC } from '../../shared/ipc'
 import { acceptedExtensions } from '../importer/formats'
 import { importBooks } from '../importer/import'
 import { scanImportPaths } from '../importer/scan'
@@ -42,6 +42,8 @@ async function pickFolder(): Promise<ImportScanResult> {
   return scanImportPaths(result.filePaths)
 }
 
+let activeImport: AbortController | null = null
+
 export function registerImportHandlers(): void {
   ipcMain.handle(IPC.importPickFiles, () => pickFiles())
   ipcMain.handle(IPC.importPickFolder, () => pickFolder())
@@ -51,8 +53,29 @@ export function registerImportHandlers(): void {
     return scanImportPaths(paths)
   })
 
-  ipcMain.handle(IPC.importRun, (_event, paths: unknown) => {
+  ipcMain.handle(IPC.importRun, async (event: IpcMainInvokeEvent, paths: unknown) => {
     assertPaths(paths, 500)
-    return importBooks(paths)
+
+    if (activeImport) throw new Error('An import is already running')
+
+    const controller = new AbortController()
+    activeImport = controller
+
+    try {
+      return await importBooks(paths, {
+        signal: controller.signal,
+        onProgress: (progress) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send(EVENT.importProgress, progress)
+          }
+        }
+      })
+    } finally {
+      activeImport = null
+    }
+  })
+
+  ipcMain.handle(IPC.importCancel, () => {
+    activeImport?.abort()
   })
 }
