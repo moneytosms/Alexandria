@@ -3,12 +3,15 @@ import type { Bay, Book, Floor, Room, Section, Wall } from '@shared/types'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { BookCover } from '../components/BookCover'
 import { DeskDrawer } from '../components/DeskDrawer'
 import { pickImportFiles } from '../import-actions'
 import { navigate } from '../router'
+import { playSound } from '../sound'
 import { useLibraryStore } from '../state/library-store'
 import { useReaderStore } from '../state/reader-store'
+import { useSetting } from '../state/settings-store'
 import { useUiStore } from '../state/ui-store'
 
 interface Props {
@@ -46,7 +49,121 @@ const bookColors = [
   '#2c3f3b'
 ]
 
-function shelvingBay(bay: Bay, wall: Wall, offset: number, books: Book[]): THREE.Group {
+const atlasColumns = 32
+const atlasRows = 16
+const atlasCellWidth = 64
+const atlasCellHeight = 128
+const atlasCellCount = atlasColumns * atlasRows
+
+interface SpineCell {
+  u0: number
+  v0: number
+  u1: number
+  v1: number
+  centerU: number
+  centerV: number
+}
+
+interface SpinePlacement {
+  book: Book
+  shelfId: number
+  matrix: THREE.Matrix4
+  position: THREE.Vector3
+  normal: THREE.Vector3
+  cell: SpineCell
+}
+
+interface Anchor {
+  position: THREE.Vector3
+  target: THREE.Vector3
+}
+
+function truncate(text: string, length: number): string {
+  const value = text.trim()
+  return value.length > length ? `${value.slice(0, length - 1)}…` : value
+}
+
+function buildSpineAtlas(books: Book[]): {
+  texture: THREE.CanvasTexture
+  cells: Map<number, SpineCell>
+} {
+  const canvas = document.createElement('canvas')
+  canvas.width = atlasColumns * atlasCellWidth
+  canvas.height = atlasRows * atlasCellHeight
+  const context = canvas.getContext('2d')
+  const cells = new Map<number, SpineCell>()
+
+  if (context) {
+    context.fillStyle = '#0c0a09'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+
+    books.forEach((book, index) => {
+      const cellIndex = index % atlasCellCount
+      const column = cellIndex % atlasColumns
+      const row = Math.floor(cellIndex / atlasColumns)
+      const x = column * atlasCellWidth
+      const y = row * atlasCellHeight
+      const base = bookColors[book.id % bookColors.length]
+
+      context.fillStyle = base
+      context.fillRect(x, y, atlasCellWidth, atlasCellHeight)
+
+      const shade = context.createLinearGradient(x, y, x + atlasCellWidth, y)
+      shade.addColorStop(0, 'rgba(0,0,0,0.32)')
+      shade.addColorStop(0.32, 'rgba(255,255,255,0.08)')
+      shade.addColorStop(1, 'rgba(0,0,0,0.4)')
+      context.fillStyle = shade
+      context.fillRect(x, y, atlasCellWidth, atlasCellHeight)
+
+      context.fillStyle = 'rgba(197,166,110,0.85)'
+      context.fillRect(x, y + 8, atlasCellWidth, 2)
+      context.fillRect(x, y + atlasCellHeight - 24, atlasCellWidth, 2)
+
+      context.save()
+      context.translate(x + atlasCellWidth - 16, y + 18)
+      context.rotate(Math.PI / 2)
+      context.fillStyle = '#f1e5cd'
+      context.font = '600 9px Inter, Georgia, serif'
+      context.textBaseline = 'middle'
+      context.fillText(truncate(book.title, 15), 0, 0)
+      context.restore()
+
+      context.save()
+      context.translate(x + 15, y + 26)
+      context.rotate(Math.PI / 2)
+      context.fillStyle = 'rgba(226,210,180,0.68)'
+      context.font = '500 7px Inter, Georgia, serif'
+      context.textBaseline = 'middle'
+      context.fillText(truncate(book.author ?? '', 18), 0, 0)
+      context.restore()
+
+      cells.set(book.id, {
+        u0: x / canvas.width,
+        v0: 1 - (y + atlasCellHeight) / canvas.height,
+        u1: (x + atlasCellWidth) / canvas.width,
+        v1: 1 - y / canvas.height,
+        centerU: (x + 3) / canvas.width,
+        centerV: 1 - (y + 3) / canvas.height
+      })
+    })
+  }
+
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.anisotropy = 4
+  texture.needsUpdate = true
+  return { texture, cells }
+}
+
+function shelvingBay(
+  bay: Bay,
+  wall: Wall,
+  offset: number,
+  books: Book[],
+  cells: Map<number, SpineCell>,
+  placements: SpinePlacement[],
+  anchors: Map<number, Anchor>
+): THREE.Group {
   const group = new THREE.Group()
   const width = 1.55
   const height = 2.62
@@ -68,6 +185,10 @@ function shelvingBay(bay: Bay, wall: Wall, offset: number, books: Book[]): THREE
 
   group.position.set(...position[wall])
   group.rotation.y = rotate[wall]
+
+  const bayMatrix = new THREE.Matrix4().makeRotationY(rotate[wall])
+  bayMatrix.setPosition(...position[wall])
+  const normal = new THREE.Vector3(0, 0, 1).transformDirection(bayMatrix)
 
   const back = new THREE.Mesh(new THREE.BoxGeometry(width, height, 0.05), woodDark)
   back.position.set(0, height / 2, -depth / 2)
@@ -107,46 +228,108 @@ function shelvingBay(bay: Bay, wall: Wall, offset: number, books: Book[]): THREE
     board.userData.shelfId = shelf.id
     group.add(board)
 
+    const anchorTarget = new THREE.Vector3(0, 1.45, 0).applyMatrix4(bayMatrix)
+    anchors.set(shelf.id, {
+      target: anchorTarget,
+      position: anchorTarget.clone().addScaledVector(normal, 2.35).setY(1.68)
+    })
+
     const shelved = (booksByShelf.get(shelf.id) ?? []).slice(0, 22)
     const usable = width - 0.22
     const step = shelved.length > 0 ? usable / shelved.length : usable
 
     shelved.forEach((book, index) => {
+      const cell = cells.get(book.id)
+      if (!cell) return
+
       const thickness = Math.min(0.07, step * 0.62)
       const bookHeight = 0.2 + ((book.id * 37) % 9) * 0.012
-      const geometry = new THREE.BoxGeometry(thickness, bookHeight, 0.21)
-      const material = new THREE.MeshStandardMaterial({
-        color: bookColors[book.id % bookColors.length],
-        roughness: 0.7,
-        metalness: 0.03
-      })
-      const mesh = new THREE.Mesh(geometry, material)
-      const x = -usable / 2 + step * (index + 0.5)
-      mesh.position.set(x, y + 0.025 + bookHeight / 2, 0.015)
-      mesh.rotation.z = ((book.id % 5) - 2) * 0.004
-      mesh.castShadow = true
-      mesh.userData.bookId = book.id
-      mesh.userData.shelfId = shelf.id
-      group.add(mesh)
+      const local = new THREE.Matrix4().compose(
+        new THREE.Vector3(
+          -usable / 2 + step * (index + 0.5),
+          y + 0.025 + bookHeight / 2,
+          0.015
+        ),
+        new THREE.Quaternion().setFromEuler(
+          new THREE.Euler(0, 0, ((book.id % 5) - 2) * 0.004)
+        ),
+        new THREE.Vector3(thickness, bookHeight, 0.21)
+      )
+      const matrix = bayMatrix.clone().multiply(local)
 
-      if (book.title.length > 0 && index % 4 === 0) {
-        const band = new THREE.Mesh(
-          new THREE.BoxGeometry(thickness + 0.002, 0.012, 0.213),
-          brassMaterial
-        )
-        band.position.copy(mesh.position)
-        band.position.y += bookHeight * 0.28
-        band.userData.bookId = book.id
-        group.add(band)
-      }
+      placements.push({
+        book,
+        shelfId: shelf.id,
+        matrix,
+        position: new THREE.Vector3().setFromMatrixPosition(matrix),
+        normal,
+        cell
+      })
     })
   })
 
   return group
 }
 
-function buildScene(room: Room, books: Book[]): THREE.Group {
+function buildSpineBatch(placements: SpinePlacement[], texture: THREE.Texture): THREE.Mesh | null {
+  if (placements.length === 0) return null
+
+  const base = new THREE.BoxGeometry(1, 1, 1)
+  const geometries: THREE.BufferGeometry[] = []
+
+  for (const placement of placements) {
+    const geometry = base.clone()
+    const uv = geometry.attributes.uv as THREE.BufferAttribute
+    const { u0, v0, u1, v1, centerU, centerV } = placement.cell
+
+    // All faces sample the plain colour at the cell's corner.
+    for (let index = 0; index < uv.count; index += 1) {
+      uv.setXY(index, centerU, centerV)
+    }
+
+    // BoxGeometry orders the +Z face last-but-one: 4 vertices starting at 16.
+    for (let index = 16; index < 20; index += 1) {
+      const x = geometry.attributes.position.getX(index)
+      const y = geometry.attributes.position.getY(index)
+      uv.setXY(index, u0 + (x + 0.5) * (u1 - u0), v0 + (y + 0.5) * (v1 - v0))
+    }
+    uv.needsUpdate = true
+
+    geometry.applyMatrix4(placement.matrix)
+    geometries.push(geometry)
+  }
+
+  base.dispose()
+  const merged = mergeGeometries(geometries, false)
+  geometries.forEach((geometry) => geometry.dispose())
+  if (!merged) return null
+
+  const material = new THREE.MeshStandardMaterial({
+    map: texture,
+    roughness: 0.72,
+    metalness: 0.03
+  })
+  const mesh = new THREE.Mesh(merged, material)
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  mesh.userData.spineBatch = true
+  return mesh
+}
+
+function buildScene(
+  room: Room,
+  books: Book[]
+): {
+  group: THREE.Group
+  anchors: Map<number, Anchor>
+  placements: SpinePlacement[]
+  bookMesh: THREE.Mesh | null
+  texture: THREE.CanvasTexture
+} {
   const scene = new THREE.Group()
+  const anchors = new Map<number, Anchor>()
+  const placements: SpinePlacement[] = []
+  const { texture, cells } = buildSpineAtlas(books)
 
   const floor = new THREE.Mesh(new THREE.BoxGeometry(roomWidth, 0.12, roomDepth), floorMaterial)
   floor.position.y = -0.06
@@ -194,9 +377,11 @@ function buildScene(room: Room, books: Book[]): THREE.Group {
 
     bays.forEach((bay, index) => {
       const offset = -span / 2 + step * (index + 0.5)
-      scene.add(shelvingBay(bay, wall, offset, books))
+      scene.add(shelvingBay(bay, wall, offset, books, cells, placements, anchors))
     })
   }
+
+  const bookMesh = buildSpineBatch(placements, texture)
 
   // Desk and lamp in the middle of the hall.
   const desk = new THREE.Group()
@@ -264,7 +449,13 @@ function buildScene(room: Room, books: Book[]): THREE.Group {
     scene.add(stack)
   })
 
-  return scene
+  return { group: scene, anchors, placements, bookMesh, texture }
+}
+
+function qualitySettings(quality: string): { pixelRatio: number; shadows: boolean; shadowMap: number } {
+  if (quality === 'low') return { pixelRatio: 1, shadows: false, shadowMap: 512 }
+  if (quality === 'high') return { pixelRatio: 2, shadows: true, shadowMap: 2048 }
+  return { pixelRatio: 1.5, shadows: true, shadowMap: 1024 }
 }
 
 function ShelfDrawer({ shelfId, onClose }: { shelfId: number; onClose: () => void }) {
@@ -295,6 +486,7 @@ function ShelfDrawer({ shelfId, onClose }: { shelfId: number; onClose: () => voi
     .sort((a, b) => a.slotIndex - b.slotIndex)
 
   const open = (book: Book): void => {
+    playSound('pull')
     openBook(book.id, book.lastPage)
     navigate('reader')
   }
@@ -357,6 +549,15 @@ function ShelfDrawer({ shelfId, onClose }: { shelfId: number; onClose: () => voi
   )
 }
 
+interface RoomStats {
+  fps: number
+  frameMs: number
+  drawCalls: number
+  triangles: number
+  books: number
+  bookBatches: number
+}
+
 export function RoomView({ library }: Props) {
   const floors = useLibraryStore((state) => state.layout)
   const books = useLibraryStore((state) => state.books)
@@ -365,11 +566,17 @@ export function RoomView({ library }: Props) {
   const setRoom = useUiStore((state) => state.setRoom)
   const openShelfId = useUiStore((state) => state.openShelfId)
   const openShelf = useUiStore((state) => state.openShelf)
+  const returningBookId = useUiStore((state) => state.returningBookId)
+  const clearReturningBook = useUiStore((state) => state.clearReturningBook)
   const openBook = useReaderStore((state) => state.open)
+  const quality = useSetting('ui.quality', 'auto')
+  const reducedMotion = useSetting('ui.reducedMotion', 'false') === 'true'
   const mountRef = useRef<HTMLDivElement | null>(null)
   const [hovered, setHovered] = useState<string | null>(null)
   const [scanning, setScanning] = useState(false)
   const [deskOpen, setDeskOpen] = useState(false)
+  const [stats, setStats] = useState<RoomStats | null>(null)
+  const [showStats, setShowStats] = useState(false)
 
   const room = useMemo<Room | null>(() => {
     const direct = floors
@@ -402,6 +609,7 @@ export function RoomView({ library }: Props) {
     const mount = mountRef.current
     if (!mount || !room) return
 
+    const preset = qualitySettings(quality)
     const scene = new THREE.Scene()
     scene.background = new THREE.Color('#0c0a09')
     scene.fog = new THREE.Fog('#0c0a09', 9, 18)
@@ -409,9 +617,9 @@ export function RoomView({ library }: Props) {
     const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 60)
     camera.position.set(0, 2.35, 6.1)
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    renderer.shadowMap.enabled = true
+    const renderer = new THREE.WebGLRenderer({ antialias: quality !== 'low', powerPreference: 'high-performance' })
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, preset.pixelRatio))
+    renderer.shadowMap.enabled = preset.shadows
     renderer.shadowMap.type = THREE.PCFSoftShadowMap
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.05
@@ -435,8 +643,8 @@ export function RoomView({ library }: Props) {
 
     const key = new THREE.SpotLight('#ffcf9a', 38, 14, Math.PI / 4.5, 0.6, 1.5)
     key.position.set(2.6, 4.2, 2.4)
-    key.castShadow = true
-    key.shadow.mapSize.set(1024, 1024)
+    key.castShadow = preset.shadows
+    key.shadow.mapSize.set(preset.shadowMap, preset.shadowMap)
     key.shadow.bias = -0.0004
     scene.add(key)
 
@@ -444,8 +652,17 @@ export function RoomView({ library }: Props) {
     fill.position.set(-3.2, 2.8, 1.8)
     scene.add(fill)
 
-    const roomGroup = buildScene(room, roomBooks)
-    scene.add(roomGroup)
+    const built = buildScene(room, roomBooks)
+    scene.add(built.group)
+    if (built.bookMesh) {
+      built.bookMesh.userData.bookIds = built.placements.map((placement) => placement.book.id)
+      built.bookMesh.userData.shelfIds = built.placements.map((placement) => placement.shelfId)
+      built.bookMesh.userData.placements = built.placements
+      scene.add(built.bookMesh)
+    }
+
+    const placementsByBook = new Map<number, SpinePlacement>()
+    for (const placement of built.placements) placementsByBook.set(placement.book.id, placement)
 
     const raycaster = new THREE.Raycaster()
     const pointer = new THREE.Vector2()
@@ -459,8 +676,17 @@ export function RoomView({ library }: Props) {
     const pick = (event: PointerEvent): { bookId?: number; shelfId?: number } | null => {
       toPointer(event)
       raycaster.setFromCamera(pointer, camera)
-      const hits = raycaster.intersectObjects(roomGroup.children, true)
+      const hits = raycaster.intersectObjects(built.group.children, true)
+      if (built.bookMesh) hits.push(...raycaster.intersectObject(built.bookMesh, false))
+      hits.sort((a, b) => a.distance - b.distance)
+
       for (const hit of hits) {
+        if (hit.object === built.bookMesh && hit.faceIndex != null) {
+          const index = Math.floor(hit.faceIndex / 12)
+          const placement = built.placements[index]
+          if (placement) return { bookId: placement.book.id, shelfId: placement.shelfId }
+          continue
+        }
         const data = hit.object.userData as { bookId?: number; shelfId?: number }
         if (data.bookId) return { bookId: data.bookId, shelfId: data.shelfId }
         if (data.shelfId) return { shelfId: data.shelfId }
@@ -468,7 +694,122 @@ export function RoomView({ library }: Props) {
       return null
     }
 
+    let travel: {
+      from: THREE.Vector3
+      to: THREE.Vector3
+      targetFrom: THREE.Vector3
+      targetTo: THREE.Vector3
+      start: number
+      duration: number
+    } | null = null
+
+    const flyTo = (shelfId: number): void => {
+      const anchor = built.anchors.get(shelfId)
+      if (!anchor) return
+      if (reducedMotion) {
+        camera.position.copy(anchor.position)
+        controls.target.copy(anchor.target)
+        controls.update()
+        return
+      }
+      travel = {
+        from: camera.position.clone(),
+        to: anchor.position.clone(),
+        targetFrom: controls.target.clone(),
+        targetTo: anchor.target.clone(),
+        start: performance.now(),
+        duration: 850
+      }
+      controls.enabled = false
+    }
+
+    interface PullFlight {
+      mesh: THREE.Mesh
+      from: THREE.Vector3
+      to: THREE.Vector3
+      start: number
+      duration: number
+      bookId: number
+      page: number | null
+      opened: boolean
+    }
+
+    let pull: PullFlight | null = null
+    let arrive: PullFlight | null = null
+    let navigateTimer: ReturnType<typeof setTimeout> | null = null
+
+    const proxyMaterial = (book: Book): THREE.MeshStandardMaterial =>
+      new THREE.MeshStandardMaterial({
+        color: bookColors[book.id % bookColors.length],
+        roughness: 0.68,
+        metalness: 0.04
+      })
+
+    const pullBook = (placement: SpinePlacement, book: Book): void => {
+      const proxy = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.3, 0.22), proxyMaterial(book))
+      proxy.position.copy(placement.position).addScaledVector(placement.normal, 0.02)
+      proxy.rotation.y = Math.atan2(placement.normal.x, placement.normal.z)
+      proxy.castShadow = true
+      scene.add(proxy)
+
+      const forward = new THREE.Vector3()
+      camera.getWorldDirection(forward)
+      const destination = camera.position
+        .clone()
+        .addScaledVector(forward, 1.05)
+        .add(new THREE.Vector3(0, -0.25, 0))
+
+      pull = {
+        mesh: proxy,
+        from: proxy.position.clone(),
+        to: destination,
+        start: performance.now(),
+        duration: 460,
+        bookId: book.id,
+        page: book.lastPage,
+        opened: false
+      }
+    }
+
+    const placeArrivingBook = (): void => {
+      if (returningBookId === null) return
+      const placement = placementsByBook.get(returningBookId)
+      if (!placement) {
+        clearReturningBook()
+        return
+      }
+      const book = placement.book
+      const proxy = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.3, 0.22), proxyMaterial(book))
+      const forward = new THREE.Vector3()
+      camera.getWorldDirection(forward)
+      proxy.position.copy(camera.position).addScaledVector(forward, 1.05)
+      scene.add(proxy)
+
+      clearReturningBook()
+
+      if (reducedMotion) {
+        scene.remove(proxy)
+        proxy.geometry.dispose()
+        ;(proxy.material as THREE.Material).dispose()
+        flyTo(placement.shelfId)
+        return
+      }
+
+      arrive = {
+        mesh: proxy,
+        from: proxy.position.clone(),
+        to: placement.position.clone().addScaledVector(placement.normal, 0.02),
+        start: performance.now(),
+        duration: 480,
+        bookId: book.id,
+        page: null,
+        opened: true
+      }
+      flyTo(placement.shelfId)
+    }
+
     const onPointerMove = (event: PointerEvent): void => {
+      if (travel || pull) return
       const target = pick(event)
       renderer.domElement.style.cursor = target ? 'pointer' : 'grab'
 
@@ -482,14 +823,27 @@ export function RoomView({ library }: Props) {
     }
 
     const onClick = (event: PointerEvent): void => {
+      if (pull) return
       const target = pick(event)
       if (!target) return
+
       if (target.bookId) {
         const book = roomBooks.find((entry) => entry.id === target.bookId)
-        openBook(target.bookId, book?.lastPage ?? 1)
-        navigate('reader')
+        const placement = placementsByBook.get(target.bookId)
+        if (!book || !placement) return
+
+        playSound('pull')
+        if (reducedMotion) {
+          openBook(book.id, book.lastPage)
+          navigate('reader')
+          return
+        }
+        flyTo(placement.shelfId)
+        pullBook(placement, book)
       } else if (target.shelfId) {
+        playSound('tick')
         openShelf(target.shelfId)
+        flyTo(target.shelfId)
       }
     }
 
@@ -509,16 +863,97 @@ export function RoomView({ library }: Props) {
     observer.observe(mount)
 
     let frame = 0
-    const animate = (): void => {
+    let lastRender = 0
+    let frames = 0
+    let since = performance.now()
+    let frameMs = 0
+
+    const animate = (now: number): void => {
       frame = requestAnimationFrame(animate)
-      controls.update()
+
+      if (document.hidden) return
+      const interval = document.hasFocus() ? 0 : 1000 / 15
+      if (interval > 0 && now - lastRender < interval) return
+      const delta = lastRender === 0 ? 16 : now - lastRender
+      lastRender = now
+      frameMs = frameMs === 0 ? delta : frameMs * 0.9 + delta * 0.1
+
+      if (travel) {
+        const progress = Math.min(1, (now - travel.start) / travel.duration)
+        const eased = progress * progress * (3 - 2 * progress)
+        camera.position.lerpVectors(travel.from, travel.to, eased)
+        controls.target.lerpVectors(travel.targetFrom, travel.targetTo, eased)
+        camera.lookAt(controls.target)
+        if (progress >= 1) {
+          travel = null
+          controls.enabled = true
+          controls.update()
+        }
+      } else {
+        controls.update()
+      }
+
+      if (pull) {
+        const progress = Math.min(1, (now - pull.start) / pull.duration)
+        const eased = progress * progress * (3 - 2 * progress)
+        pull.mesh.position.lerpVectors(pull.from, pull.to, eased)
+        pull.mesh.rotation.y += 0.012
+        pull.mesh.scale.setScalar(1 + eased * 1.6)
+        if (progress >= 1 && !pull.opened) {
+          pull.opened = true
+          const { bookId, page } = pull
+          scene.remove(pull.mesh)
+          pull.mesh.geometry.dispose()
+          ;(pull.mesh.material as THREE.Material).dispose()
+          pull = null
+          navigateTimer = setTimeout(() => {
+            openBook(bookId, page)
+            navigate('reader')
+          }, 90)
+        }
+      }
+
+      if (arrive) {
+        const progress = Math.min(1, (now - arrive.start) / arrive.duration)
+        const eased = progress * progress * (3 - 2 * progress)
+        arrive.mesh.position.lerpVectors(arrive.from, arrive.to, eased)
+        arrive.mesh.scale.setScalar(2.6 - eased * 1.6)
+        if (progress >= 1) {
+          scene.remove(arrive.mesh)
+          arrive.mesh.geometry.dispose()
+          ;(arrive.mesh.material as THREE.Material).dispose()
+          arrive = null
+          playSound('thud')
+        }
+      }
+
       renderer.render(scene, camera)
+
+      frames += 1
+      if (now - since >= 500) {
+        const snapshot: RoomStats = {
+          fps: Math.round((frames * 1000) / Math.max(1, now - since)),
+          frameMs: Math.round(frameMs * 10) / 10,
+          drawCalls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
+          books: built.placements.length,
+          bookBatches: built.bookMesh ? 1 : 0
+        }
+        if (import.meta.env.DEV) setStats(snapshot)
+        ;(window as unknown as { __alexandriaRoomStats?: () => RoomStats }).__alexandriaRoomStats =
+          () => snapshot
+        frames = 0
+        since = now
+      }
     }
-    animate()
+
+    placeArrivingBook()
+    animate(performance.now())
 
     return () => {
       cancelAnimationFrame(frame)
       observer.disconnect()
+      if (navigateTimer) clearTimeout(navigateTimer)
       renderer.domElement.removeEventListener('pointermove', onPointerMove)
       renderer.domElement.removeEventListener('click', onClick)
       controls.dispose()
@@ -538,11 +973,22 @@ export function RoomView({ library }: Props) {
           }
         }
       })
+      built.texture.dispose()
       renderer.dispose()
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
       setHovered(null)
+      setStats(null)
     }
-  }, [room, roomBooks, openBook, openShelf])
+  }, [
+    room,
+    roomBooks,
+    openBook,
+    openShelf,
+    clearReturningBook,
+    returningBookId,
+    reducedMotion,
+    quality
+  ])
 
   const scanMissing = async (): Promise<void> => {
     setScanning(true)
@@ -597,6 +1043,16 @@ export function RoomView({ library }: Props) {
           <button className="button button--quiet" type="button" onClick={() => setDeskOpen(true)}>
             Desk & inbox
           </button>
+          {import.meta.env.DEV ? (
+            <button
+              className="button button--quiet"
+              type="button"
+              onClick={() => setShowStats((current) => !current)}
+              aria-pressed={showStats}
+            >
+              Stats
+            </button>
+          ) : null}
         </div>
 
         <dl className="room__hud-stats">
@@ -624,6 +1080,15 @@ export function RoomView({ library }: Props) {
       <p className="room__hint">Drag to look around · click a book to read · click a shelf to browse</p>
 
       {hovered ? <div className="room__tooltip">{hovered}</div> : null}
+
+      {showStats && stats ? (
+        <div className="room__stats" role="status">
+          <span>{stats.fps} fps</span>
+          <span>{stats.frameMs} ms</span>
+          <span>{stats.drawCalls} draws</span>
+          <span>{stats.triangles.toLocaleString()} tris</span>
+        </div>
+      ) : null}
 
       {openShelfId !== null ? (
         <ShelfDrawer shelfId={openShelfId} onClose={() => openShelf(null)} />

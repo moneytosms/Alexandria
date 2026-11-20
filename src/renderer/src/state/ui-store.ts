@@ -12,11 +12,14 @@ interface UiState {
   searchOpen: boolean
   settingsOpen: boolean
   selectedBook: Book | null
+  returningBookId: number | null
   setRoom: (selection: RoomSelection) => void
   openShelf: (shelfId: number | null) => void
   setSearchOpen: (open: boolean) => void
   setSettingsOpen: (open: boolean) => void
   setSelectedBook: (book: Book | null) => void
+  returnBook: (bookId: number) => void
+  clearReturningBook: () => void
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -25,11 +28,14 @@ export const useUiStore = create<UiState>((set) => ({
   searchOpen: false,
   settingsOpen: false,
   selectedBook: null,
+  returningBookId: null,
   setRoom: (room) => set({ room }),
   openShelf: (openShelfId) => set({ openShelfId }),
   setSearchOpen: (searchOpen) => set({ searchOpen }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
-  setSelectedBook: (selectedBook) => set({ selectedBook })
+  setSelectedBook: (selectedBook) => set({ selectedBook }),
+  returnBook: (returningBookId) => set({ returningBookId }),
+  clearReturningBook: () => set({ returningBookId: null })
 }))
 
 interface PlayerState {

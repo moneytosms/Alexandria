@@ -4,6 +4,7 @@ import { closeDatabase, openDatabase } from '../db'
 import { readLibraryConfig, writeLibraryConfig, type LibraryConfig } from './config'
 import { libraryPaths, type LibraryPaths } from './paths'
 import { rebaseCopiedBooks } from './reconcile'
+import { cleanOrphanedCopies, databaseIntegrity } from './recovery'
 import { seedLibraryLayout } from './seed'
 import { seedDefaultSettings } from './settings'
 
@@ -47,7 +48,17 @@ export function openLibrary(root: string): Library {
   seedDefaultSettings(db)
   rebaseCopiedBooks(db, root)
 
+  const integrity = databaseIntegrity(db)
+  if (integrity !== 'ok') {
+    console.error(`Library database integrity check failed: ${integrity}`)
+  }
+
   current = { root, paths, config, db }
+
+  // A crash mid-import can leave an unreferenced copy behind. The check is
+  // synchronous so a second instance cannot start mid-sweep.
+  cleanOrphanedCopies(db, paths.books, (message) => console.info(message))
+
   return current
 }
 

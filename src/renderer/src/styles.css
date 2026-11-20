@@ -2326,6 +2326,8 @@ kbd {
 
 .dialog {
   width: min(420px, calc(100vw - 3rem));
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
   padding: 1.5rem;
   background: #171310;
   border: 1px solid rgba(176, 141, 87, 0.3);
@@ -2788,5 +2790,190 @@ kbd {
 
   .music-player__volume {
     display: none;
+  }
+}
+
+/* Settings */
+
+.settings {
+  max-width: 880px;
+  max-height: min(86vh, 780px);
+  overflow: auto;
+}
+
+.settings__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.settings__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.5rem 2rem;
+}
+
+.settings__section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings__section h3 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 1.15rem;
+  font-weight: 500;
+  color: var(--brass-bright);
+}
+
+.settings__path {
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--sans);
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0;
+}
+
+.settings__stats div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.settings__stats dt {
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.settings__stats dd {
+  margin: 0;
+  overflow: hidden;
+  font-size: 0.85rem;
+  text-overflow: ellipsis;
+}
+
+.settings__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.settings__check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--parchment);
+  cursor: pointer;
+}
+
+.settings__check input {
+  margin-top: 0.2rem;
+  accent-color: var(--brass);
+}
+
+.settings__muted {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.settings__folders {
+  max-height: 84px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.settings__folders li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings__shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+}
+
+.settings__shortcuts div {
+  display: grid;
+  grid-template-columns: minmax(100px, auto) 1fr;
+  gap: 0.75rem;
+  align-items: baseline;
+  font-size: 0.78rem;
+}
+
+.settings__shortcuts dt,
+.settings__shortcuts dd {
+  margin: 0;
+}
+
+.settings__shortcuts dd {
+  color: var(--muted);
+}
+
+.settings__shortcuts kbd {
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-family: var(--sans);
+  font-size: 0.7rem;
+  color: var(--parchment);
+}
+
+.settings__message {
+  margin: 1rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.82rem;
+  color: var(--brass-bright);
+  background: rgba(176, 141, 87, 0.08);
+}
+
+/* Room performance HUD */
+
+.room__stats {
+  position: absolute;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  display: flex;
+  gap: 0.85rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  color: var(--brass-bright);
+  background: rgba(12, 10, 9, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+@media (max-width: 900px) {
+  .settings__grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

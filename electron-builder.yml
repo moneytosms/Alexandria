@@ -12,3 +12,14 @@ linux:
     - AppImage
     - deb
   category: Office
+  icon: build/icon.png
+  executableName: alexandria
+  synopsis: A local-first 3D library for your PDFs
+  description: Alexandria keeps a curated PDF library in a dark-academia reading room, with a full-screen reader, non-destructive annotations, and local music.
+  desktop:
+    entry:
+      Name: Alexandria
+      Comment: A local-first 3D library for your PDFs
+      Categories: Office;Graphics;
+      Keywords: pdf;library;reader;books;notes;
+      StartupWMClass: Alexandria

@@ -37,6 +37,19 @@ function safeFileName(name: string): string {
   return cleaned.length > 0 ? cleaned : 'document.pdf'
 }
 
+function friendlyError(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : ''
+  const code = (error as NodeJS.ErrnoException | null)?.code
+
+  if (code === 'ENOSPC' || code === 'EDQUOT' || /no space left/i.test(message)) {
+    return 'The disk is full; the import was rolled back'
+  }
+  if (code === 'EACCES' || code === 'EPERM') {
+    return 'The library folder is not writable'
+  }
+  return message || fallback
+}
+
 function displayTitle(path: string): string {
   const raw = basename(path, extname(path)).replace(/[_]+/g, ' ').trim()
   return raw.length > 0 ? raw : basename(path)
@@ -160,7 +173,7 @@ async function importOne(
         path,
         name,
         status: 'failed',
-        message: error instanceof Error ? error.message : 'Conversion failed'
+        message: friendlyError(error, 'Conversion failed')
       }
     }
   }
@@ -181,7 +194,7 @@ async function importOne(
       path,
       name,
       status: 'failed',
-      message: error instanceof Error ? error.message : 'PDF could not be read'
+      message: friendlyError(error, 'PDF could not be read')
     }
   }
 
@@ -271,12 +284,11 @@ async function importOne(
       const raced = findBookBySha256(db, sha256)
       if (raced) return existingOutcome(raced, path)
     }
-
     return {
       path,
       name,
       status: 'failed',
-      message: error instanceof Error ? error.message : 'Could not add the book'
+      message: friendlyError(error, 'Could not add the book')
     }
   }
 }
@@ -306,7 +318,7 @@ export async function importBooks(
         path,
         name: basename(path),
         status: 'failed',
-        message: error instanceof Error ? error.message : 'Import failed'
+        message: friendlyError(error, 'Import failed')
       }
     }
 

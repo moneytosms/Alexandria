@@ -11,6 +11,7 @@ import {
   type PointerEvent as ReactPointerEvent
 } from 'react'
 import { navigate } from '../router'
+import { playSound } from '../sound'
 import { recallLastBook, useReaderStore } from '../state/reader-store'
 import { useUiStore } from '../state/ui-store'
 
@@ -268,7 +269,9 @@ function PdfPage({
           )}
       </div>
 
-      {annotations.some((annotation) => annotation.type === 'ink') || draftStroke ? (
+      {annotations.some((annotation) => annotation.type === 'ink') ||
+      draftStroke ||
+      tool === 'ink' ? (
         <svg
           className={`pdf-page__ink ${tool === 'ink' ? 'pdf-page__ink--active' : ''}`}
           viewBox="0 0 100 100"
@@ -364,6 +367,7 @@ export function ReaderView() {
   const openBook = useReaderStore((state) => state.open)
   const storePage = useReaderStore((state) => state.setPage)
   const setSelectedBook = useUiStore((state) => state.setSelectedBook)
+  const returnBook = useUiStore((state) => state.returnBook)
 
   const [book, setBook] = useState<Book | null>(null)
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
@@ -580,8 +584,14 @@ export function ReaderView() {
     [pageCount, settings.mode, storePage]
   )
 
-  const nextPage = useCallback(() => goToPage(page + 1), [goToPage, page])
-  const previousPage = useCallback(() => goToPage(page - 1), [goToPage, page])
+  const nextPage = useCallback(() => {
+    playSound('page')
+    goToPage(page + 1)
+  }, [goToPage, page])
+  const previousPage = useCallback(() => {
+    playSound('page')
+    goToPage(page - 1)
+  }, [goToPage, page])
 
   const onScroll = (): void => {
     if (settings.mode !== 'continuous' || programmaticScroll.current || !scrollRef.current) return
@@ -748,6 +758,10 @@ export function ReaderView() {
           event.preventDefault()
           previousPage()
           break
+        case ' ':
+          event.preventDefault()
+          nextPage()
+          break
         case 'Home':
           event.preventDefault()
           goToPage(1)
@@ -886,7 +900,10 @@ export function ReaderView() {
             className="icon-button"
             type="button"
             aria-label="Back to the room"
-            onClick={() => navigate('room')}
+            onClick={() => {
+              if (storeBookId !== null) returnBook(storeBookId)
+              navigate('room')
+            }}
           >
             ←
           </button>

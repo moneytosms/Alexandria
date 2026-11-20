@@ -46,6 +46,35 @@ export function MusicDock() {
     if (audioRef.current) audioRef.current.volume = volume
   }, [volume])
 
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: current?.title ?? 'Alexandria',
+      artist: current?.artist ?? '',
+      album: current?.album ?? '',
+      artwork: current?.artPath ? [{ src: current.artPath }] : []
+    })
+    navigator.mediaSession.playbackState = playing ? 'playing' : 'paused'
+  }, [current, playing])
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    const audio = audioRef.current
+    navigator.mediaSession.setActionHandler('play', () => setPlaying(true))
+    navigator.mediaSession.setActionHandler('pause', () => setPlaying(false))
+    navigator.mediaSession.setActionHandler('nexttrack', () => next())
+    navigator.mediaSession.setActionHandler('previoustrack', () => previous())
+    navigator.mediaSession.setActionHandler('seekto', (details) => {
+      if (audio && details.seekTime !== undefined) audio.currentTime = details.seekTime
+    })
+
+    return () => {
+      for (const action of ['play', 'pause', 'nexttrack', 'previoustrack', 'seekto'] as const) {
+        navigator.mediaSession.setActionHandler(action, null)
+      }
+    }
+  }, [next, previous, setPlaying])
+
   if (tracks.length === 0) return null
 
   return (

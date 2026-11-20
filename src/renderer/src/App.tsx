@@ -2,9 +2,12 @@ import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { MusicDock } from './components/MusicDock'
 import { QueueTray } from './components/QueueTray'
 import { SearchOverlay } from './components/SearchOverlay'
+import { SettingsDialog } from './components/SettingsDialog'
 import { queueDroppedFiles } from './import-actions'
 import { navigate, useView, viewIds, viewMeta } from './router'
 import { useLibraryStore, type LibraryStatus } from './state/library-store'
+import { restorePlayer, wirePlayerPersistence } from './state/player-persistence'
+import { useSettingsStore } from './state/settings-store'
 import { useUiStore } from './state/ui-store'
 import { IndexView } from './views/IndexView'
 import { LibrarianView } from './views/LibrarianView'
@@ -27,6 +30,8 @@ export default function App() {
   const status = useLibraryStore((state) => state.status)
   const loadLibrary = useLibraryStore((state) => state.load)
   const setSearchOpen = useUiStore((state) => state.setSearchOpen)
+  const setSettingsOpen = useUiStore((state) => state.setSettingsOpen)
+  const loadSettings = useSettingsStore((state) => state.load)
   const selectedBook = useUiStore((state) => state.selectedBook)
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
@@ -64,7 +69,24 @@ export default function App() {
 
   useEffect(() => {
     void loadLibrary()
-  }, [loadLibrary])
+    void loadSettings()
+  }, [loadLibrary, loadSettings])
+
+  useEffect(() => {
+    restorePlayer()
+    return wirePlayerPersistence()
+  }, [])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if ((event.metaKey || event.ctrlKey) && event.key === ',') {
+        event.preventDefault()
+        setSettingsOpen(true)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [setSettingsOpen])
 
   useEffect(() => {
     document.title = `${meta.title} · Alexandria`
@@ -138,6 +160,15 @@ export default function App() {
               <span>Search the library</span>
               <kbd>⌘K</kbd>
             </button>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Open settings"
+              title="Settings (Ctrl/Cmd + ,)"
+            >
+              ⚙
+            </button>
             <span className={`status status--${status}`}>
               <span className="status__dot" aria-hidden="true" />
               {statusLabel[status]}
@@ -157,6 +188,7 @@ export default function App() {
       <QueueTray />
       <MusicDock />
       <SearchOverlay />
+      <SettingsDialog library={library} />
 
       {dragging ? (
         <div className="drop-overlay" aria-hidden="true">
