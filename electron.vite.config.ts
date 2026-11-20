@@ -7,9 +7,11 @@ const devCsp = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  "img-src 'self' data: blob: alexandria:",
+  "media-src 'self' blob: alexandria:",
   "font-src 'self' data:",
-  "connect-src 'self' ws://localhost:* http://localhost:*",
+  "connect-src 'self' alexandria: ws://localhost:* http://localhost:*",
+  "worker-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'"
 ].join('; ')
@@ -18,9 +20,11 @@ const prodCsp = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  "img-src 'self' data: blob: alexandria:",
+  "media-src 'self' blob: alexandria:",
   "font-src 'self' data:",
-  "connect-src 'self'",
+  "connect-src 'self' alexandria:",
+  "worker-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'"
 ].join('; ')
