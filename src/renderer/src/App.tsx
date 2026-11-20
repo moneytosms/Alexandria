@@ -1,5 +1,7 @@
 import type { LibraryInfo } from '@shared/api'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type DragEvent } from 'react'
+import { QueueTray } from './components/QueueTray'
+import { queueDroppedFiles } from './import-actions'
 import { navigate, useView, viewIds, viewMeta } from './router'
 import { IndexView } from './views/IndexView'
 import { LibrarianView } from './views/LibrarianView'
@@ -21,7 +23,39 @@ export default function App() {
   const view = useView()
   const [status, setStatus] = useState<Status>('connecting')
   const [library, setLibrary] = useState<LibraryInfo | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const dragDepth = useRef(0)
   const meta = viewMeta[view]
+
+  const onDragEnter = (event: DragEvent<HTMLDivElement>): void => {
+    if (!event.dataTransfer.types.includes('Files')) return
+    event.preventDefault()
+    dragDepth.current += 1
+    setDragging(true)
+  }
+
+  const onDragLeave = (event: DragEvent<HTMLDivElement>): void => {
+    event.preventDefault()
+    dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) setDragging(false)
+  }
+
+  const onDragOver = (event: DragEvent<HTMLDivElement>): void => {
+    if (!event.dataTransfer.types.includes('Files')) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+  }
+
+  const onDrop = (event: DragEvent<HTMLDivElement>): void => {
+    event.preventDefault()
+    dragDepth.current = 0
+    setDragging(false)
+
+    if (event.dataTransfer.files.length > 0) {
+      void queueDroppedFiles(event.dataTransfer.files)
+    }
+  }
+
 
   useEffect(() => {
     let alive = true
@@ -46,7 +80,13 @@ export default function App() {
   }, [meta.title])
 
   return (
-    <div className="app">
+    <div
+      className="app"
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
       <aside className="rail">
         <div className="brand">
           <span className="brand__mark" aria-hidden="true">
@@ -108,6 +148,20 @@ export default function App() {
           {view === 'index' ? <IndexView library={library} /> : null}
         </section>
       </main>
+
+      <QueueTray />
+
+      {dragging ? (
+        <div className="drop-overlay" aria-hidden="true">
+          <div className="drop-overlay__card">
+            <p className="eyebrow">Drop to queue</p>
+            <p className="drop-overlay__title">Add to the library</p>
+            <p className="drop-overlay__hint">
+              PDF, PPTX, PPT, DOCX, DOC, ODP, ODT · folders are scanned
+            </p>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

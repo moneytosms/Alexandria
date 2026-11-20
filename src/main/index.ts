@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
 import { IPC } from '../shared/ipc'
 import { getLibraryInfo } from './library/info'
+import { registerImportHandlers } from './ipc/import'
 import {
   defaultLibraryRoot,
   hasStoredLibraryRoot,
@@ -14,6 +15,8 @@ import { createLogger, getLogger, setLogger } from './logger'
 
 app.setName('Alexandria')
 app.commandLine.appendSwitch('ozone-platform-hint', 'auto')
+
+registerImportHandlers()
 
 process.on('uncaughtException', (error) => {
   getLogger().error('Uncaught exception in main', error.stack ?? String(error))

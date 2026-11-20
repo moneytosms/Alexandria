@@ -1,10 +1,14 @@
 import type { LibraryInfo } from '@shared/api'
+import { pickImportFiles, pickImportFolder } from '../import-actions'
+import { useImportStore } from '../state/import-store'
 
 interface Props {
   library: LibraryInfo | null
 }
 
 export function LibrarianView({ library }: Props) {
+  const queued = useImportStore((state) => state.candidates.length)
+
   return (
     <div className="librarian">
       <article className="panel panel--wide">
@@ -32,10 +36,19 @@ export function LibrarianView({ library }: Props) {
 
       <article className="panel">
         <div className="panel__head">
-          <h3>Import queue</h3>
-          <span className="badge">Idle</span>
+          <h3>Import</h3>
+          <span className="badge">{queued > 0 ? `${queued} queued` : 'Idle'}</span>
         </div>
-        <p>No files waiting. Drag a PDF anywhere in the room to add it.</p>
+        <p>Drop files or folders anywhere in the room, or choose them here.</p>
+        <div className="panel__actions">
+          <button className="button" type="button" onClick={() => void pickImportFiles()}>
+            Import files
+          </button>
+          <button className="button button--quiet" type="button" onClick={() => void pickImportFolder()}>
+            Scan folder
+          </button>
+        </div>
+        <p className="panel__formats">PDF, PPTX, PPT, DOCX, DOC, ODP, ODT</p>
       </article>
 
       <article className="panel">

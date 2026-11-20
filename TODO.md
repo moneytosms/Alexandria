@@ -21,7 +21,7 @@ Status: `[ ]` todo, `[~]` in progress, `[x]` done, `[!]` blocked.
 
 ## Current focus
 
-`M1-01 Import entry points`
+`M1-02 Detect, hash, dedupe`
 
 ## Planning
 
@@ -48,7 +48,7 @@ Nothing ships until this is solid. Keep it boring.
 
 ## M1 Import and index
 
-- [ ] **M1-01 Import entry points.** Drag and drop, file picker, folder scan with extension filter. Done when a PDF can be queued from all three.
+- [x] **M1-01 Import entry points.** Drag and drop, file picker, folder scan with extension filter. Done when a PDF can be queued from all three.
 - [ ] **M1-02 Detect, hash, dedupe.** Format detection, SHA-256, duplicate focus. Done when importing the same file twice yields one book.
 - [ ] **M1-03 Copy or link.** Copy into `books/` by default, link optional, `rel_path` for copies. Done when both modes import and resolve after restart.
 - [ ] **M1-04 PDF metadata.** Title, author, page count via pdfjs-dist, filename fallback. Done when a fixture PDF gets correct values.
@@ -141,6 +141,7 @@ Nothing ships until this is solid. Keep it boring.
 
 Newest first. One line per task: date, task, note.
 
+- 2026-11-20 M1-01: drag, file picker, and folder scan feed a real queue with rejection reasons.
 - 2026-11-20 M0-05 to M0-09: schema and book queries, first-run location, rotating log and error boundaries, CI, five-view shell with bundled fonts. CI workflow is local-verified; remote run awaits first push.
 - 2026-11-20 M0-01 to M0-04, M0-10: scaffold, toolchain, secure shell, typed IPC, test harness.
 - 2026-11-20 P-01 to P-05: spec, review, defaults, TODO, handoff.

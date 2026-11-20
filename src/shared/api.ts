@@ -1,3 +1,5 @@
+import type { ImportScanResult } from './types'
+
 export interface LibraryInfo {
   root: string
   name: string
@@ -16,4 +18,8 @@ export interface AlexandriaApi {
   getSettings: () => Promise<Record<string, string>>
   setSetting: (key: string, value: string) => Promise<void>
   log: (level: LogLevel, message: string, detail?: string) => Promise<void>
+  pickImportFiles: () => Promise<ImportScanResult>
+  pickImportFolder: () => Promise<ImportScanResult>
+  scanImportPaths: (paths: string[]) => Promise<ImportScanResult>
+  pathForFile: (file: File) => string
 }

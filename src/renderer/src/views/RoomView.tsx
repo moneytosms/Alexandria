@@ -1,4 +1,5 @@
 import type { LibraryInfo } from '@shared/api'
+import { pickImportFiles } from '../import-actions'
 import { navigate } from '../router'
 
 interface Props {
@@ -18,11 +19,11 @@ export function RoomView({ library }: Props) {
         </p>
 
         <div className="room__actions">
-          <button className="button" type="button" onClick={() => navigate('index')}>
-            Browse the index
+          <button className="button" type="button" onClick={() => void pickImportFiles()}>
+            Import files
           </button>
-          <button className="button button--quiet" type="button" onClick={() => navigate('map')}>
-            Open the map
+          <button className="button button--quiet" type="button" onClick={() => navigate('index')}>
+            Browse the index
           </button>
         </div>
 

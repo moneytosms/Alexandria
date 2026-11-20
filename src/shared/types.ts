@@ -2,6 +2,29 @@ export type StorageMode = 'copy' | 'link'
 
 export type ReadingState = 'unread' | 'reading' | 'finished'
 
+export type ImportFormat = 'pdf' | 'pptx' | 'ppt' | 'docx' | 'doc' | 'odp' | 'odt'
+
+export interface ImportCandidate {
+  path: string
+  name: string
+  format: ImportFormat
+  size: number
+  modifiedAt: string
+}
+
+export type ImportRejectionReason = 'unsupported' | 'unreadable'
+
+export interface ImportRejection {
+  path: string
+  name: string
+  reason: ImportRejectionReason
+}
+
+export interface ImportScanResult {
+  candidates: ImportCandidate[]
+  rejected: ImportRejection[]
+}
+
 export interface Book {
   id: number
   title: string

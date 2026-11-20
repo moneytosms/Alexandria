@@ -3,5 +3,8 @@ export const IPC = {
   libraryInfo: 'library:info',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
-  logWrite: 'log:write'
+  logWrite: 'log:write',
+  importPickFiles: 'import:pickFiles',
+  importPickFolder: 'import:pickFolder',
+  importScanPaths: 'import:scanPaths'
 } as const

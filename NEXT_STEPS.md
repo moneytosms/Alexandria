@@ -14,16 +14,17 @@ The full design is in `SPEC.md`. The task list is in `TODO.md`.
 - M0 is complete. The app builds, launches, creates a library folder, and shows a five-view shell.
 - Git repository initialized at `/home/sms/Projects/Alexandria`. Commits: scaffold, database, and the in-progress M0 completion commit.
 - Working: electron-vite, React, strict TypeScript, secure preload, typed IPC, node:sqlite with FTS5, migrations, first-run library location, settings, rotating logs, error boundaries, five-view hash router, bundled Cormorant Garamond and Inter, Vitest, Playwright, electron-builder, CI workflow.
-- Tests: `pnpm test` has 5 files and 18 passing tests. `pnpm test:e2e` has 3 passing Electron tests. `pnpm build` and `pnpm exec electron-builder --linux dir` pass locally.
+- Import entry points are working: file picker, folder scan, and drag and drop feed a visible queue with unsupported and unreadable files reported. Nothing is written to the database yet.
+- Tests: `pnpm test` has 6 files and 23 passing tests. `pnpm test:e2e` has 4 passing Electron tests. `pnpm build` and `pnpm exec electron-builder --linux dir` pass locally.
 - CI workflow exists at `.github/workflows/ci.yml` but has not run remotely because the repo has no remote yet.
-- Not started: import, PDF, reader, 3D room, map projection, librarian actions, music.
+- Not started: hashing and import processing, PDF metadata, reader, 3D room, map projection, librarian actions, music.
 - Defaults settled: imports copy into the library by default, layout growth is append-only, Linux is the v1 install target, assets are procedural or CC0.
 
 ## First 10 minutes
 
 1. Run `pnpm install`, `pnpm test`, and `pnpm build` to confirm the environment.
 2. Read `SPEC.md` sections 6, 9, and 10. Those define the experience, the architecture, and the room.
-3. Open `TODO.md` and start `M1-01 Import entry points`.
+3. Open `TODO.md` and start `M1-02 Detect, hash, dedupe`.
 4. Keep `pdfjs-dist` work out of the main process. Plan the PDF worker or utility process before M1-04.
 
 ## How to resume
