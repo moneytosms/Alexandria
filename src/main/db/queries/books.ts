@@ -26,7 +26,18 @@ interface RawBook {
   last_opened_at: string | null
   metadata_json: string | null
   reader_json: string | null
+  unlocked_at: string | null
+  missing: number
+  tags?: string | null
 }
+
+const bookSelect = `
+  SELECT b.*,
+    (SELECT group_concat(t.name, char(31))
+       FROM book_tags bt JOIN tags t ON t.id = bt.tag_id
+      WHERE bt.book_id = b.id) AS tags
+  FROM books b
+`
 
 function toBook(row: RawBook): Book {
   return {
@@ -53,25 +64,86 @@ function toBook(row: RawBook): Book {
     addedAt: row.added_at,
     lastOpenedAt: row.last_opened_at,
     metadataJson: row.metadata_json,
-    readerJson: row.reader_json
+    readerJson: row.reader_json,
+    unlockedAt: row.unlocked_at,
+    missing: row.missing === 1,
+    tags: row.tags ? row.tags.split('\u001f').filter((tag) => tag.length > 0) : []
   }
 }
 
 export function findBookBySha256(db: DatabaseSync, sha256: string): Book | null {
-  const row = db.prepare('SELECT * FROM books WHERE sha256 = ?').get(sha256) as RawBook | undefined
+  const row = db
+    .prepare(`${bookSelect} WHERE b.sha256 = ?`)
+    .get(sha256) as RawBook | undefined
   return row ? toBook(row) : null
 }
 
 export function getBook(db: DatabaseSync, id: number): Book | null {
-  const row = db.prepare('SELECT * FROM books WHERE id = ?').get(id) as RawBook | undefined
+  const row = db.prepare(`${bookSelect} WHERE b.id = ?`).get(id) as RawBook | undefined
   return row ? toBook(row) : null
 }
 
-export function listBooks(db: DatabaseSync, limit = 100, offset = 0): Book[] {
+export function listBooks(db: DatabaseSync, limit = 5000, offset = 0): Book[] {
   const rows = db
-    .prepare('SELECT * FROM books ORDER BY added_at DESC, id DESC LIMIT ? OFFSET ?')
+    .prepare(`${bookSelect} ORDER BY b.added_at DESC, b.id DESC LIMIT ? OFFSET ?`)
     .all(limit, offset) as unknown as RawBook[]
   return rows.map(toBook)
+}
+
+export function listBooksInShelf(db: DatabaseSync, shelfId: number, limit = 5000): Book[] {
+  const rows = db
+    .prepare(`${bookSelect} WHERE b.shelf_id = ? ORDER BY b.slot_index ASC, b.id ASC LIMIT ?`)
+    .all(shelfId, limit) as unknown as RawBook[]
+  return rows.map(toBook)
+}
+
+export function listInboxBooks(db: DatabaseSync): Book[] {
+  const rows = db
+    .prepare(`${bookSelect} WHERE b.shelf_id IS NULL ORDER BY b.added_at DESC`)
+    .all() as unknown as RawBook[]
+  return rows.map(toBook)
+}
+
+export function listDeskBooks(db: DatabaseSync): {
+  reading: Book[]
+  pinned: Book[]
+  finished: Book[]
+} {
+  const pinned = (
+    db
+      .prepare(`${bookSelect} WHERE b.desk_pinned = 1 ORDER BY b.last_opened_at DESC NULLS LAST`)
+      .all() as unknown as RawBook[]
+  ).map(toBook)
+
+  const pinnedIds = new Set(pinned.map((book) => book.id))
+
+  const reading = (
+    db
+      .prepare(
+        `${bookSelect} WHERE b.reading_state = 'reading' ORDER BY b.last_opened_at DESC NULLS LAST LIMIT 10`
+      )
+      .all() as unknown as RawBook[]
+  )
+    .map(toBook)
+    .filter((book) => !pinnedIds.has(book.id))
+    .slice(0, Math.max(0, 5 - pinned.length))
+
+  const takenIds = new Set([...pinnedIds, ...reading.map((book) => book.id)])
+  const finished = (
+    db
+      .prepare(
+        `${bookSelect}
+         WHERE b.finished_at IS NOT NULL
+           AND b.finished_at >= datetime('now', '-30 days')
+         ORDER BY b.finished_at DESC LIMIT 10`
+      )
+      .all() as unknown as RawBook[]
+  )
+    .map(toBook)
+    .filter((book) => !takenIds.has(book.id))
+    .slice(0, Math.max(0, 5 - pinned.length - reading.length))
+
+  return { reading, pinned, finished }
 }
 
 export function countBooks(db: DatabaseSync): number {
@@ -136,6 +208,10 @@ export function updateReadingProgress(
   ).run(page, scroll, id)
 }
 
+export function touchBookOpened(db: DatabaseSync, id: number): void {
+  db.prepare("UPDATE books SET last_opened_at = datetime('now') WHERE id = ?").run(id)
+}
+
 export function markBookFinished(db: DatabaseSync, id: number, finished: boolean): void {
   if (finished) {
     db.prepare(
@@ -170,6 +246,108 @@ export function moveBookToShelf(db: DatabaseSync, id: number, shelfId: number): 
   return book
 }
 
+export function unshelveBook(db: DatabaseSync, id: number): Book {
+  db.prepare('UPDATE books SET shelf_id = NULL, slot_index = 0 WHERE id = ?').run(id)
+  const book = getBook(db, id)
+  if (!book) throw new Error(`Book ${id} not found`)
+  return book
+}
+
+export function reorderShelf(db: DatabaseSync, shelfId: number, orderedIds: number[]): void {
+  const update = db.prepare('UPDATE books SET slot_index = ? WHERE id = ? AND shelf_id = ?')
+  orderedIds.forEach((id, index) => update.run(index, id, shelfId))
+}
+
+export interface BookIndexPatch {
+  title?: string
+  author?: string | null
+  pageCount?: number | null
+  fileSize?: number | null
+  coverPath?: string | null
+  metadataJson?: string | null
+  unlockedAt?: string | null
+  encrypted?: boolean
+  missing?: boolean
+  filePath?: string
+  relPath?: string | null
+}
+
+export function updateBookIndex(db: DatabaseSync, id: number, patch: BookIndexPatch): Book {
+  const sets: string[] = []
+  const values: Array<string | number | null> = []
+
+  const push = (column: string, value: string | number | null): void => {
+    sets.push(`${column} = ?`)
+    values.push(value)
+  }
+
+  if (patch.title !== undefined) push('title', patch.title)
+  if (patch.author !== undefined) push('author', patch.author)
+  if (patch.pageCount !== undefined) push('page_count', patch.pageCount)
+  if (patch.fileSize !== undefined) push('file_size', patch.fileSize)
+  if (patch.coverPath !== undefined) push('cover_path', patch.coverPath)
+  if (patch.metadataJson !== undefined) push('metadata_json', patch.metadataJson)
+  if (patch.unlockedAt !== undefined) push('unlocked_at', patch.unlockedAt)
+  if (patch.encrypted !== undefined) push('encrypted', patch.encrypted ? 1 : 0)
+  if (patch.missing !== undefined) push('missing', patch.missing ? 1 : 0)
+  if (patch.filePath !== undefined) push('file_path', patch.filePath)
+  if (patch.relPath !== undefined) push('rel_path', patch.relPath)
+
+  if (sets.length > 0) {
+    db.prepare(`UPDATE books SET ${sets.join(', ')} WHERE id = ?`).run(...values, id)
+  }
+
+  const book = getBook(db, id)
+  if (!book) throw new Error(`Book ${id} not found`)
+  return book
+}
+
+export function updateBookMetadata(
+  db: DatabaseSync,
+  id: number,
+  patch: { title?: string; author?: string | null; readerJson?: string | null }
+): Book {
+  const sets: string[] = []
+  const values: Array<string | null> = []
+
+  if (patch.title !== undefined) {
+    sets.push('title = ?')
+    values.push(patch.title)
+  }
+  if (patch.author !== undefined) {
+    sets.push('author = ?')
+    values.push(patch.author)
+  }
+  if (patch.readerJson !== undefined) {
+    sets.push('reader_json = ?')
+    values.push(patch.readerJson)
+  }
+
+  if (sets.length > 0) {
+    db.prepare(`UPDATE books SET ${sets.join(', ')} WHERE id = ?`).run(...values, id)
+  }
+
+  const book = getBook(db, id)
+  if (!book) throw new Error(`Book ${id} not found`)
+  return book
+}
+
+export function setBookPinned(db: DatabaseSync, id: number, pinned: boolean): Book {
+  db.prepare('UPDATE books SET desk_pinned = ? WHERE id = ?').run(pinned ? 1 : 0, id)
+  const book = getBook(db, id)
+  if (!book) throw new Error(`Book ${id} not found`)
+  return book
+}
+
 export function removeBook(db: DatabaseSync, id: number): void {
   db.prepare('DELETE FROM books WHERE id = ?').run(id)
+}
+
+export function listBooksForShelfIds(db: DatabaseSync, shelfIds: number[]): Book[] {
+  if (shelfIds.length === 0) return []
+  const placeholders = shelfIds.map(() => '?').join(', ')
+  const rows = db
+    .prepare(`${bookSelect} WHERE b.shelf_id IN (${placeholders}) ORDER BY b.slot_index ASC`)
+    .all(...shelfIds) as unknown as RawBook[]
+  return rows.map(toBook)
 }

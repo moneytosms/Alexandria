@@ -17,7 +17,7 @@ describe('database', () => {
   it('migrates an empty database to the current schema', () => {
     const db = openDatabase(':memory:')
 
-    expect(currentSchemaVersion()).toBe(1)
+    expect(currentSchemaVersion()).toBeGreaterThanOrEqual(1)
 
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type IN ('table','view') ORDER BY name")

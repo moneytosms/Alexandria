@@ -130,6 +130,15 @@ export const migrations: Migration[] = [
     version: 1,
     name: 'initial',
     up: initialSchema
+  },
+  {
+    version: 2,
+    name: 'import-state',
+    up: `
+ALTER TABLE books ADD COLUMN unlocked_at TEXT;
+ALTER TABLE books ADD COLUMN missing INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE bays ADD COLUMN auto_created INTEGER NOT NULL DEFAULT 0;
+`
   }
 ]
 
