@@ -11,20 +11,20 @@ interface Tip {
 
 const tips: Tip[] = [
   {
-    title: 'Import a volume',
-    body: 'Use Import files in the room, or drop PDFs and office documents anywhere on the window.'
+    title: 'Walk the Grand Hall & Mezzanine',
+    body: 'Move with WASD or arrow keys (Shift to sprint), drag to look, or click any floor or staircase step to glide there. Climb the South-East grand staircase to explore the upper mezzanine balcony and Observatory telescope. Press Tab for first-person walk mode and N to toggle the corner mini-map.'
   },
   {
-    title: 'Walk the room',
-    body: 'Drag to look around. Click a spine to read it, a shelf board to browse it, and use ← → to travel between shelves.'
+    title: 'Shape Atmosphere & Soundscape',
+    body: 'Press T (or open Atmosphere) to switch architectural themes (Dark Academia, Sunlit Marble, Observatory), shift lighting & weather moods (Dawn to Stormy Night), and mix procedural Rain, Fireplace, and Brass Chimes.'
   },
   {
-    title: 'Mark the page',
-    body: 'Select text to highlight it, press H or I to draw, E to erase, B to bookmark, and ? for the full shortcut list.'
+    title: 'Curate Shelves, Wings & Books',
+    body: 'Click any shelf to rename its brass nameplate, add shelves, or drag-and-drop books to reorder or move them across shelves. Right-click any 3D book spine for a Quick Preview card, or press P to build new wall wings.'
   },
   {
-    title: 'Play something',
-    body: 'Choose music folders in settings, then the dock at the bottom plays local files and remembers your place.'
+    title: 'Focus with Study Mode & Tracker',
+    body: 'Open the Reading Desk for your study session timer, daily goal, and reading streak. Inside the Reader, press D for distraction-free Study Mode, H or I to annotate, B to bookmark, and ? for all shortcuts.'
   }
 ]
 

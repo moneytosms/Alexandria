@@ -7,7 +7,7 @@ import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 
 type PdfjsModule = typeof import('pdfjs-dist/legacy/build/pdf.mjs')
 
-const require = createRequire(__filename)
+const require = createRequire(typeof __filename !== 'undefined' ? __filename : import.meta.url)
 const pdfjsRoot = dirname(require.resolve('pdfjs-dist/package.json'))
 const standardFontDataUrl = join(pdfjsRoot, 'standard_fonts') + '/'
 const cMapUrl = join(pdfjsRoot, 'cmaps') + '/'

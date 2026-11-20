@@ -1,9 +1,12 @@
+const isElectron =
+  typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('electron')
+
 export function coverUrl(bookId: number): string {
-  return `alexandria://cover/${bookId}`
+  return isElectron ? `alexandria://cover/${bookId}` : `/api/media/cover/${bookId}`
 }
 
 export function thumbUrl(bookId: number, page: number): string {
-  return `alexandria://thumb/${bookId}/${page}`
+  return isElectron ? `alexandria://thumb/${bookId}/${page}` : `/api/media/thumb/${bookId}/${page}`
 }
 
 export function audioUrl(path: string): string {
@@ -11,5 +14,5 @@ export function audioUrl(path: string): string {
   let binary = ''
   for (const byte of bytes) binary += String.fromCharCode(byte)
   const encoded = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-  return `alexandria://audio/${encoded}`
+  return isElectron ? `alexandria://audio/${encoded}` : `/api/media/audio/${encoded}`
 }

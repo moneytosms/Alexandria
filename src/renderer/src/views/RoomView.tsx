@@ -1,733 +1,142 @@
 import type { LibraryInfo } from '@shared/api'
-import type { Bay, Book, Floor, Room, Section, Wall } from '@shared/types'
+import type { Book, Floor, Room, Shelf, Wall } from '@shared/types'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
+import { AtmospherePopover } from '../components/AtmospherePopover'
 import { BookCover } from '../components/BookCover'
+import { BookPreviewCard } from '../components/BookPreviewCard'
 import { DeskDrawer } from '../components/DeskDrawer'
+import { MiniMapHud, type MiniMapMarker, type MiniMapPlayerPose } from '../components/MiniMapHud'
 import { pickImportFiles } from '../import-actions'
 import { navigate } from '../router'
-import { playSound } from '../sound'
+import {
+  HALL_MOOD_RIGS,
+  normalizeHallMood,
+  normalizeHallTheme,
+  type HallMood,
+  type HallTheme
+} from '../room/atmosphere'
+import {
+  EYE_HEIGHT,
+  GALLERY_Y,
+  resolveWalkPosition
+} from '../room/physics'
+import {
+  BOOK_COLORS,
+  buildLibraryScene,
+  shelfDisplayName,
+  type RoomAnchor,
+  type SpinePlacement
+} from '../room/scene-builders'
+import { playSound, useAmbientStore } from '../sound'
 import { useLibraryStore } from '../state/library-store'
 import { useReaderStore } from '../state/reader-store'
-import { useSetting } from '../state/settings-store'
-import { useUiStore } from '../state/ui-store'
+import { useSetting, useSettingsStore } from '../state/settings-store'
+import { formatClock, modeDurationSeconds, useStudyStore } from '../state/study-store'
+import { usePlayerStore, useUiStore } from '../state/ui-store'
 
 interface Props {
   library: LibraryInfo | null
 }
 
-const roomWidth = 10
-const roomDepth = 8
-const wallHeight = 3.3
-
-const wood = new THREE.MeshStandardMaterial({ color: '#3a281c', roughness: 0.82, metalness: 0.04 })
-const woodDark = new THREE.MeshStandardMaterial({
-  color: '#241a13',
-  roughness: 0.9,
-  metalness: 0.02
-})
-const wallMaterial = new THREE.MeshStandardMaterial({ color: '#1e1712', roughness: 0.95 })
-const floorMaterial = new THREE.MeshStandardMaterial({ color: '#2a1c13', roughness: 0.78 })
-const brassMaterial = new THREE.MeshStandardMaterial({
-  color: '#b08d57',
-  roughness: 0.35,
-  metalness: 0.7
-})
-const ceilingMaterial = new THREE.MeshStandardMaterial({ color: '#17120e', roughness: 0.97 })
-const trimMaterial = new THREE.MeshStandardMaterial({
-  color: '#2b2119',
-  roughness: 0.72,
-  metalness: 0.16
-})
-const glassMaterial = new THREE.MeshStandardMaterial({
-  color: '#2f3a4c',
-  emissive: '#8fa3c4',
-  emissiveIntensity: 0.28,
-  roughness: 0.35,
-  metalness: 0.1
-})
-
-const bookColors = [
-  '#6d2f27',
-  '#33463a',
-  '#3d3555',
-  '#6b5330',
-  '#2f4452',
-  '#5a3b2b',
-  '#7d6a45',
-  '#473a4d',
-  '#59463a',
-  '#2c3f3b'
-]
-
-const atlasColumns = 32
-const atlasRows = 16
-const atlasCellWidth = 64
-const atlasCellHeight = 128
-const atlasCellCount = atlasColumns * atlasRows
-
-interface SpineCell {
-  u0: number
-  v0: number
-  u1: number
-  v1: number
-  centerU: number
-  centerV: number
+interface RoomStats {
+  fps: number
+  frameMs: number
+  drawCalls: number
+  triangles: number
+  books: number
+  bookBatches: number
 }
 
-interface SpinePlacement {
-  book: Book
+interface HoverTarget {
+  label: string
+  hint: string
+  bookId?: number
+  shelfId?: number
+  kind?: 'desk' | 'gramophone' | 'globe' | 'fireplace' | 'balcony'
+}
+
+interface AnchorSummary {
+  id: string
+  label: string
+  meta?: string
+  kind: RoomAnchor['kind']
+  level: 1 | 2
+  shelfId?: number
+}
+
+const DEFAULT_FOV = 58
+const MIN_FOV = 40
+const MAX_FOV = 72
+
+function detectSoftwareGl(): boolean {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2')
+    if (!gl) return true
+    const ext = gl.getExtension('WEBGL_debug_renderer_info')
+    const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER
+    const gpu = String(gl.getParameter(param))
+    gl.getExtension('WEBGL_lose_context')?.loseContext()
+    return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu)
+  } catch {
+    return false
+  }
+}
+
+function yawPitchFromLook(from: THREE.Vector3, lookAt: THREE.Vector3): { yaw: number; pitch: number } {
+  const dx = lookAt.x - from.x
+  const dy = lookAt.y - from.y
+  const dz = lookAt.z - from.z
+  const horiz = Math.hypot(dx, dz) || 0.001
+  const yaw = Math.atan2(-dx, -dz)
+  const pitch = Math.max(-1.05, Math.min(1.05, Math.atan2(dy, horiz)))
+  return { yaw, pitch }
+}
+
+function shortestAngleDelta(from: number, to: number): number {
+  let diff = (to - from + Math.PI) % (Math.PI * 2)
+  if (diff < 0) diff += Math.PI * 2
+  return diff - Math.PI
+}
+
+function ShelfDrawer({
+  shelfId,
+  autoFocusRename,
+  onInspectBook,
+  onSelectShelf,
+  onClose
+}: {
   shelfId: number
-  matrix: THREE.Matrix4
-  position: THREE.Vector3
-  normal: THREE.Vector3
-  cell: SpineCell
-}
-
-interface Anchor {
-  position: THREE.Vector3
-  target: THREE.Vector3
-}
-
-function truncate(text: string, length: number): string {
-  const value = text.trim()
-  return value.length > length ? `${value.slice(0, length - 1)}…` : value
-}
-
-/* Soft radial textures, built once and shared by every room rebuild. */
-let shadowTexture: THREE.CanvasTexture | null = null
-let glowTexture: THREE.CanvasTexture | null = null
-
-function radialTexture(stops: Array<[number, string]>): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas')
-  canvas.width = 128
-  canvas.height = 128
-  const context = canvas.getContext('2d')
-  if (context) {
-    const gradient = context.createRadialGradient(64, 64, 2, 64, 64, 64)
-    for (const [offset, color] of stops) gradient.addColorStop(offset, color)
-    context.fillStyle = gradient
-    context.fillRect(0, 0, 128, 128)
-  }
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.colorSpace = THREE.SRGBColorSpace
-  return texture
-}
-
-function contactShadowTexture(): THREE.CanvasTexture {
-  if (!shadowTexture) {
-    shadowTexture = radialTexture([
-      [0, 'rgba(0,0,0,0.55)'],
-      [0.55, 'rgba(0,0,0,0.26)'],
-      [1, 'rgba(0,0,0,0)']
-    ])
-  }
-  return shadowTexture
-}
-
-function warmGlowTexture(): THREE.CanvasTexture {
-  if (!glowTexture) {
-    glowTexture = radialTexture([
-      [0, 'rgba(255,201,131,0.85)'],
-      [0.4, 'rgba(255,178,96,0.28)'],
-      [1, 'rgba(255,170,80,0)']
-    ])
-  }
-  return glowTexture
-}
-
-function buildSpineAtlas(books: Book[]): {
-  texture: THREE.CanvasTexture
-  cells: Map<number, SpineCell>
-} {
-  const canvas = document.createElement('canvas')
-  canvas.width = atlasColumns * atlasCellWidth
-  canvas.height = atlasRows * atlasCellHeight
-  const context = canvas.getContext('2d')
-  const cells = new Map<number, SpineCell>()
-
-  if (context) {
-    context.fillStyle = '#0c0a09'
-    context.fillRect(0, 0, canvas.width, canvas.height)
-
-    books.forEach((book, index) => {
-      const cellIndex = index % atlasCellCount
-      const column = cellIndex % atlasColumns
-      const row = Math.floor(cellIndex / atlasColumns)
-      const x = column * atlasCellWidth
-      const y = row * atlasCellHeight
-      const base = bookColors[book.id % bookColors.length]
-
-      context.fillStyle = base
-      context.fillRect(x, y, atlasCellWidth, atlasCellHeight)
-
-      const shade = context.createLinearGradient(x, y, x + atlasCellWidth, y)
-      shade.addColorStop(0, 'rgba(0,0,0,0.32)')
-      shade.addColorStop(0.32, 'rgba(255,255,255,0.08)')
-      shade.addColorStop(1, 'rgba(0,0,0,0.4)')
-      context.fillStyle = shade
-      context.fillRect(x, y, atlasCellWidth, atlasCellHeight)
-
-      context.fillStyle = 'rgba(197,166,110,0.85)'
-      context.fillRect(x, y + 8, atlasCellWidth, 2)
-      context.fillRect(x, y + atlasCellHeight - 24, atlasCellWidth, 2)
-
-      context.save()
-      context.translate(x + atlasCellWidth - 16, y + 18)
-      context.rotate(Math.PI / 2)
-      context.fillStyle = '#f1e5cd'
-      context.font = '600 9px Inter, Georgia, serif'
-      context.textBaseline = 'middle'
-      context.fillText(truncate(book.title, 15), 0, 0)
-      context.restore()
-
-      context.save()
-      context.translate(x + 15, y + 26)
-      context.rotate(Math.PI / 2)
-      context.fillStyle = 'rgba(226,210,180,0.68)'
-      context.font = '500 7px Inter, Georgia, serif'
-      context.textBaseline = 'middle'
-      context.fillText(truncate(book.author ?? '', 18), 0, 0)
-      context.restore()
-
-      cells.set(book.id, {
-        u0: x / canvas.width,
-        v0: 1 - (y + atlasCellHeight) / canvas.height,
-        u1: (x + atlasCellWidth) / canvas.width,
-        v1: 1 - y / canvas.height,
-        centerU: (x + 3) / canvas.width,
-        centerV: 1 - (y + 3) / canvas.height
-      })
-    })
-  }
-
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.colorSpace = THREE.SRGBColorSpace
-  texture.anisotropy = 4
-  texture.needsUpdate = true
-  return { texture, cells }
-}
-
-function shelvingBay(
-  bay: Bay,
-  wall: Wall,
-  offset: number,
-  books: Book[],
-  cells: Map<number, SpineCell>,
-  placements: SpinePlacement[],
-  anchors: Map<number, Anchor>
-): THREE.Group {
-  const group = new THREE.Group()
-  const width = 1.55
-  const height = 2.62
-  const depth = 0.36
-
-  const rotate: Record<Wall, number> = {
-    north: 0,
-    east: -Math.PI / 2,
-    south: Math.PI,
-    west: Math.PI / 2
-  }
-
-  const position: Record<Wall, [number, number, number]> = {
-    north: [offset, 0, -roomDepth / 2 + 0.22],
-    east: [roomWidth / 2 - 0.22, 0, offset],
-    south: [offset, 0, roomDepth / 2 - 0.22],
-    west: [-roomWidth / 2 + 0.22, 0, offset]
-  }
-
-  group.position.set(...position[wall])
-  group.rotation.y = rotate[wall]
-
-  const bayMatrix = new THREE.Matrix4().makeRotationY(rotate[wall])
-  bayMatrix.setPosition(...position[wall])
-  const normal = new THREE.Vector3(0, 0, 1).transformDirection(bayMatrix)
-
-  const back = new THREE.Mesh(new THREE.BoxGeometry(width, height, 0.05), woodDark)
-  back.position.set(0, height / 2, -depth / 2)
-  back.receiveShadow = true
-  group.add(back)
-
-  const sideGeometry = new THREE.BoxGeometry(0.07, height, depth)
-  for (const x of [-width / 2, width / 2]) {
-    const side = new THREE.Mesh(sideGeometry, wood)
-    side.position.set(x, height / 2, 0)
-    side.castShadow = true
-    group.add(side)
-  }
-
-  const top = new THREE.Mesh(new THREE.BoxGeometry(width, 0.08, depth + 0.06), wood)
-  top.position.set(0, height, 0)
-  top.castShadow = true
-  group.add(top)
-
-  const shelfCount = bay.shelves.length
-  const spacing = (height - 0.3) / Math.max(1, shelfCount)
-  const booksByShelf = new Map<number, Book[]>()
-  for (const book of books) {
-    if (book.shelfId === null) continue
-    const shelf = bay.shelves.find((entry) => entry.id === book.shelfId)
-    if (!shelf) continue
-    const list = booksByShelf.get(shelf.id) ?? []
-    list.push(book)
-    booksByShelf.set(shelf.id, list)
-  }
-
-  const contact = new THREE.Mesh(
-    new THREE.PlaneGeometry(width + 0.5, 1.0),
-    new THREE.MeshBasicMaterial({
-      map: contactShadowTexture(),
-      transparent: true,
-      opacity: 0.7,
-      depthWrite: false
-    })
-  )
-  contact.rotation.x = -Math.PI / 2
-  contact.position.set(0, 0.008, depth / 2 + 0.3)
-  contact.renderOrder = 1
-  group.add(contact)
-
-  bay.shelves.forEach((shelf, row) => {
-    const y = 0.16 + row * spacing
-    const board = new THREE.Mesh(new THREE.BoxGeometry(width - 0.08, 0.05, depth), wood)
-    board.position.set(0, y, 0)
-    board.receiveShadow = true
-    board.userData.shelfId = shelf.id
-    group.add(board)
-
-    const anchorTarget = new THREE.Vector3(0, 1.45, 0).applyMatrix4(bayMatrix)
-    anchors.set(shelf.id, {
-      target: anchorTarget,
-      position: anchorTarget.clone().addScaledVector(normal, 2.35).setY(1.68)
-    })
-
-    const shelved = (booksByShelf.get(shelf.id) ?? []).slice(0, 22)
-    const usable = width - 0.22
-    const step = shelved.length > 0 ? usable / shelved.length : usable
-
-    shelved.forEach((book, index) => {
-      const cell = cells.get(book.id)
-      if (!cell) return
-
-      const thickness = Math.min(0.07, step * 0.62)
-      const bookHeight = 0.2 + ((book.id * 37) % 9) * 0.012
-      const local = new THREE.Matrix4().compose(
-        new THREE.Vector3(
-          -usable / 2 + step * (index + 0.5),
-          y + 0.025 + bookHeight / 2,
-          0.015
-        ),
-        new THREE.Quaternion().setFromEuler(
-          new THREE.Euler(0, 0, ((book.id % 5) - 2) * 0.004)
-        ),
-        new THREE.Vector3(thickness, bookHeight, 0.21)
-      )
-      const matrix = bayMatrix.clone().multiply(local)
-
-      placements.push({
-        book,
-        shelfId: shelf.id,
-        matrix,
-        position: new THREE.Vector3().setFromMatrixPosition(matrix),
-        normal,
-        cell
-      })
-    })
-  })
-
-  return group
-}
-
-function buildSpineBatch(placements: SpinePlacement[], texture: THREE.Texture): THREE.Mesh | null {
-  if (placements.length === 0) return null
-
-  const base = new THREE.BoxGeometry(1, 1, 1)
-  const geometries: THREE.BufferGeometry[] = []
-
-  for (const placement of placements) {
-    const geometry = base.clone()
-    const uv = geometry.attributes.uv as THREE.BufferAttribute
-    const { u0, v0, u1, v1, centerU, centerV } = placement.cell
-
-    // All faces sample the plain colour at the cell's corner.
-    for (let index = 0; index < uv.count; index += 1) {
-      uv.setXY(index, centerU, centerV)
-    }
-
-    // BoxGeometry orders the +Z face last-but-one: 4 vertices starting at 16.
-    for (let index = 16; index < 20; index += 1) {
-      const x = geometry.attributes.position.getX(index)
-      const y = geometry.attributes.position.getY(index)
-      uv.setXY(index, u0 + (x + 0.5) * (u1 - u0), v0 + (y + 0.5) * (v1 - v0))
-    }
-    uv.needsUpdate = true
-
-    geometry.applyMatrix4(placement.matrix)
-    geometries.push(geometry)
-  }
-
-  base.dispose()
-  const merged = mergeGeometries(geometries, false)
-  geometries.forEach((geometry) => geometry.dispose())
-  if (!merged) return null
-
-  const material = new THREE.MeshStandardMaterial({
-    map: texture,
-    roughness: 0.72,
-    metalness: 0.03
-  })
-  const mesh = new THREE.Mesh(merged, material)
-  mesh.castShadow = true
-  mesh.receiveShadow = true
-  mesh.userData.spineBatch = true
-  return mesh
-}
-
-function buildScene(
-  room: Room,
-  books: Book[],
-  quality: string
-): {
-  group: THREE.Group
-  anchors: Map<number, Anchor>
-  placements: SpinePlacement[]
-  bookMesh: THREE.Mesh | null
-  texture: THREE.CanvasTexture
-  dust: THREE.Points | null
-} {
-  const scene = new THREE.Group()
-  const anchors = new Map<number, Anchor>()
-  const placements: SpinePlacement[] = []
-  const { texture, cells } = buildSpineAtlas(books)
-
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(roomWidth, 0.12, roomDepth), floorMaterial)
-  floor.position.y = -0.06
-  floor.receiveShadow = true
-  scene.add(floor)
-
-  const rug = new THREE.Mesh(
-    new THREE.BoxGeometry(4.6, 0.015, 3.2),
-    new THREE.MeshStandardMaterial({ color: '#3d2a22', roughness: 0.95 })
-  )
-  rug.position.y = 0.006
-  rug.receiveShadow = true
-  scene.add(rug)
-
-  const walls: Array<[Wall, [number, number, number], [number, number, number]]> = [
-    ['north', [0, wallHeight / 2, -roomDepth / 2 - 0.05], [roomWidth, wallHeight, 0.1]],
-    ['east', [roomWidth / 2 + 0.05, wallHeight / 2, 0], [0.1, wallHeight, roomDepth]],
-    ['south', [0, wallHeight / 2, roomDepth / 2 + 0.05], [roomWidth, wallHeight, 0.1]],
-    ['west', [-roomWidth / 2 - 0.05, wallHeight / 2, 0], [0.1, wallHeight, roomDepth]]
-  ]
-
-  for (const [, position, size] of walls) {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), wallMaterial)
-    mesh.position.set(...position)
-    mesh.receiveShadow = true
-    scene.add(mesh)
-  }
-
-  // Ceiling with dark beams, so looking up closes the hall.
-  const ceiling = new THREE.Mesh(new THREE.BoxGeometry(roomWidth, 0.12, roomDepth), ceilingMaterial)
-  ceiling.position.y = wallHeight + 0.04
-  scene.add(ceiling)
-  for (const z of [-2.4, 0, 2.4]) {
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(roomWidth, 0.16, 0.18), woodDark)
-    beam.position.set(0, wallHeight - 0.08, z)
-    beam.castShadow = true
-    scene.add(beam)
-  }
-
-  // Columns at the corners, with a base and a capital.
-  for (const x of [-roomWidth / 2 + 0.3, roomWidth / 2 - 0.3]) {
-    for (const z of [-roomDepth / 2 + 0.3, roomDepth / 2 - 0.3]) {
-      const shaft = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.16, 0.18, wallHeight - 0.2, 18),
-        trimMaterial
-      )
-      shaft.position.set(x, wallHeight / 2, z)
-      shaft.castShadow = true
-      scene.add(shaft)
-
-      const base = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.16, 0.42), trimMaterial)
-      base.position.set(x, 0.08, z)
-      scene.add(base)
-
-      const capital = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.14, 0.44), trimMaterial)
-      capital.position.set(x, wallHeight - 0.12, z)
-      scene.add(capital)
-    }
-  }
-
-  // Clerestory windows above the shelves, with muntins and a dusk glow.
-  const windowXs = [-3.0, 0, 3.0]
-  for (const x of windowXs) {
-    const frame = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.72, 0.08), trimMaterial)
-    frame.position.set(x, 2.98, -roomDepth / 2 + 0.02)
-    scene.add(frame)
-
-    const glass = new THREE.Mesh(new THREE.PlaneGeometry(1.34, 0.56), glassMaterial)
-    glass.position.set(x, 2.98, -roomDepth / 2 + 0.07)
-    scene.add(glass)
-
-    for (const offset of [-0.45, 0, 0.45]) {
-      const muntin = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.6, 0.03), trimMaterial)
-      muntin.position.set(x + offset, 2.98, -roomDepth / 2 + 0.09)
-      scene.add(muntin)
-    }
-    const crossbar = new THREE.Mesh(new THREE.BoxGeometry(1.36, 0.035, 0.03), trimMaterial)
-    crossbar.position.set(x, 2.98, -roomDepth / 2 + 0.09)
-    scene.add(crossbar)
-
-    const glow = new THREE.Sprite(
-      new THREE.SpriteMaterial({
-        map: warmGlowTexture(),
-        color: '#9db1d4',
-        transparent: true,
-        opacity: 0.3,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
-      })
-    )
-    glow.position.set(x, 2.9, -roomDepth / 2 + 0.4)
-    glow.scale.set(2.4, 1.5, 1)
-    scene.add(glow)
-  }
-
-  // A rolling ladder leans against the north wall beside the bays.
-  const ladder = new THREE.Group()
-  for (const x of [-0.28, 0.28]) {
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.06, 2.75, 0.06), wood)
-    rail.position.set(x, 1.35, 0)
-    rail.castShadow = true
-    ladder.add(rail)
-  }
-  for (let rung = 0; rung < 8; rung += 1) {
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.035, 0.035), wood)
-    bar.position.set(0, 0.28 + rung * 0.32, 0)
-    ladder.add(bar)
-  }
-  const hook = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.018, 8, 14, Math.PI), brassMaterial)
-  hook.position.set(0, 2.73, 0)
-  ladder.add(hook)
-  ladder.position.set(3.95, 0, -roomDepth / 2 + 0.36)
-  ladder.rotation.x = -0.1
-  ladder.rotation.z = 0.02
-  scene.add(ladder)
-
-  // Gramophone on a side table near the desk.
-  const gramophone = new THREE.Group()
-  const table = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.06, 0.5), wood)
-  table.position.y = 0.72
-  table.castShadow = true
-  gramophone.add(table)
-  for (const x of [-0.28, 0.28]) {
-    for (const z of [-0.18, 0.18]) {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.72, 0.05), woodDark)
-      leg.position.set(x, 0.36, z)
-      gramophone.add(leg)
-    }
-  }
-  const gramoBase = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.1, 0.28), woodDark)
-  gramoBase.position.y = 0.8
-  gramophone.add(gramoBase)
-  const platter = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.13, 0.13, 0.015, 24),
-    new THREE.MeshStandardMaterial({ color: '#141210', roughness: 0.6 })
-  )
-  platter.position.y = 0.86
-  gramophone.add(platter)
-  const horn = new THREE.Mesh(
-    new THREE.ConeGeometry(0.26, 0.46, 22, 1, true),
-    new THREE.MeshStandardMaterial({
-      color: '#8a6a35',
-      roughness: 0.42,
-      metalness: 0.55,
-      side: THREE.DoubleSide
-    })
-  )
-  horn.position.set(0.02, 1.18, -0.02)
-  horn.rotation.set(0.55, 0, 0.35)
-  horn.castShadow = true
-  gramophone.add(horn)
-  const crank = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.2, 8), brassMaterial)
-  crank.position.set(0.2, 0.86, 0.16)
-  crank.rotation.z = Math.PI / 2
-  gramophone.add(crank)
-  gramophone.position.set(-2.35, 0, 1.8)
-  scene.add(gramophone)
-
-  const sectionWalls = new Map<Wall, Section[]>()
-  for (const section of room.sections) {
-    const list = sectionWalls.get(section.wall) ?? []
-    list.push(section)
-    sectionWalls.set(section.wall, list)
-  }
-
-  for (const [wall, sections] of sectionWalls) {
-    const wallLength = wall === 'north' || wall === 'south' ? roomWidth : roomDepth
-    const bays = sections.flatMap((section) => section.bays)
-
-    if (bays.length === 0) continue
-
-    const bayWidth = 1.7
-    const span = Math.min(wallLength - 1.4, bays.length * bayWidth)
-    const step = span / bays.length
-
-    bays.forEach((bay, index) => {
-      const offset = -span / 2 + step * (index + 0.5)
-      scene.add(shelvingBay(bay, wall, offset, books, cells, placements, anchors))
-    })
-  }
-
-  const bookMesh = buildSpineBatch(placements, texture)
-
-  // Desk and lamp in the middle of the hall.
-  const desk = new THREE.Group()
-  const top = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.09, 1.25), wood)
-  top.position.y = 0.78
-  top.castShadow = true
-  top.receiveShadow = true
-  desk.add(top)
-
-  const legGeometry = new THREE.BoxGeometry(0.09, 0.78, 0.09)
-  for (const x of [-1.15, 1.15]) {
-    for (const z of [-0.48, 0.48]) {
-      const leg = new THREE.Mesh(legGeometry, woodDark)
-      leg.position.set(x, 0.39, z)
-      leg.castShadow = true
-      desk.add(leg)
-    }
-  }
-
-  const lampBase = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, 0.05, 24), brassMaterial)
-  lampBase.position.set(0.75, 0.85, -0.25)
-  desk.add(lampBase)
-
-  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.52, 12), brassMaterial)
-  stem.position.set(0.75, 1.11, -0.25)
-  desk.add(stem)
-
-  const shade = new THREE.Mesh(
-    new THREE.ConeGeometry(0.24, 0.18, 24, 1, true),
-    new THREE.MeshStandardMaterial({
-      color: '#c9a06a',
-      emissive: '#8a5f2b',
-      emissiveIntensity: 0.6,
-      side: THREE.DoubleSide,
-      roughness: 0.6
-    })
-  )
-  shade.position.set(0.75, 1.4, -0.25)
-  desk.add(shade)
-
-  const lampLight = new THREE.PointLight('#ffbd73', 12, 5.5, 1.6)
-  lampLight.position.set(0.75, 1.35, -0.25)
-  lampLight.castShadow = false
-  desk.add(lampLight)
-
-  const lampGlow = new THREE.Sprite(
-    new THREE.SpriteMaterial({
-      map: warmGlowTexture(),
-      color: '#ffc179',
-      transparent: true,
-      opacity: 0.62,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false
-    })
-  )
-  lampGlow.position.set(0.75, 1.36, -0.25)
-  lampGlow.scale.set(1.5, 1.5, 1)
-  desk.add(lampGlow)
-
-  const openBook = new THREE.Mesh(
-    new THREE.BoxGeometry(0.46, 0.02, 0.32),
-    new THREE.MeshStandardMaterial({ color: '#d9c9a3', roughness: 0.9 })
-  )
-  openBook.position.set(-0.5, 0.84, 0.05)
-  openBook.rotation.y = 0.2
-  desk.add(openBook)
-
-  scene.add(desk)
-
-  const deskShadow = new THREE.Mesh(
-    new THREE.PlaneGeometry(3.3, 2.0),
-    new THREE.MeshBasicMaterial({
-      map: contactShadowTexture(),
-      transparent: true,
-      opacity: 0.65,
-      depthWrite: false
-    })
-  )
-  deskShadow.rotation.x = -Math.PI / 2
-  deskShadow.position.set(0, 0.009, 0.1)
-  deskShadow.renderOrder = 1
-  scene.add(deskShadow)
-
-  const inbox = books.filter((book) => book.shelfId === null).slice(0, 4)
-  inbox.forEach((book, index) => {
-    const stack = new THREE.Mesh(
-      new THREE.BoxGeometry(0.34, 0.05, 0.26),
-      new THREE.MeshStandardMaterial({ color: bookColors[book.id % bookColors.length], roughness: 0.75 })
-    )
-    stack.position.set(-0.55, 0.855 + index * 0.052, -0.28)
-    stack.rotation.y = (index % 2 === 0 ? 1 : -1) * 0.08
-    stack.userData.bookId = book.id
-    scene.add(stack)
-  })
-
-  // Dust motes catch the lamp light and give the air some depth.
-  let dust: THREE.Points | null = null
-  if (quality !== 'low') {
-    const count = quality === 'high' ? 320 : 190
-    const positions = new Float32Array(count * 3)
-    for (let index = 0; index < count; index += 1) {
-      positions[index * 3] = (Math.random() - 0.5) * (roomWidth - 0.6)
-      positions[index * 3 + 1] = Math.random() * (wallHeight - 0.3) + 0.15
-      positions[index * 3 + 2] = (Math.random() - 0.5) * (roomDepth - 0.6)
-    }
-    const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-    dust = new THREE.Points(
-      geometry,
-      new THREE.PointsMaterial({
-        color: '#f0dfb9',
-        size: quality === 'high' ? 0.016 : 0.012,
-        transparent: true,
-        opacity: 0.34,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        sizeAttenuation: true
-      })
-    )
-    scene.add(dust)
-  }
-
-  return { group: scene, anchors, placements, bookMesh, texture, dust }
-}
-
-function qualitySettings(quality: string): { pixelRatio: number; shadows: boolean; shadowMap: number } {
-  if (quality === 'low') return { pixelRatio: 1, shadows: false, shadowMap: 512 }
-  if (quality === 'high') return { pixelRatio: 2, shadows: true, shadowMap: 2048 }
-  return { pixelRatio: 1.5, shadows: true, shadowMap: 1024 }
-}
-
-function ShelfDrawer({ shelfId, onClose }: { shelfId: number; onClose: () => void }) {
+  autoFocusRename?: boolean
+  onInspectBook: (book: Book) => void
+  onSelectShelf: (nextShelfId: number) => void
+  onClose: () => void
+}) {
   const layout = useLibraryStore((state) => state.layout)
   const books = useLibraryStore((state) => state.books)
-  const refresh = useLibraryStore((state) => state.refreshBooks)
+  const refresh = useLibraryStore((state) => state.refresh)
   const openBook = useReaderStore((state) => state.open)
-  const [busy, setBusy] = useState(false)
 
-  const shelf = useMemo(() => {
+  const [busy, setBusy] = useState(false)
+  const [nameDraft, setNameDraft] = useState('')
+  const [sectionDraft, setSectionDraft] = useState('')
+  const [editingSection, setEditingSection] = useState(false)
+  const [savedNotice, setSavedNotice] = useState<string | null>(null)
+  const [draggingBookId, setDraggingBookId] = useState<number | null>(null)
+  const [dragOverBookId, setDragOverBookId] = useState<number | null>(null)
+  const [dragOverShelfId, setDragOverShelfId] = useState<number | null>(null)
+  const [addingShelf, setAddingShelf] = useState(false)
+  const [newShelfLabel, setNewShelfLabel] = useState('')
+  const nameInputRef = useRef<HTMLInputElement | null>(null)
+
+  const found = useMemo(() => {
     for (const floor of layout) {
       for (const room of floor.rooms) {
         for (const section of room.sections) {
           for (const bay of section.bays) {
-            const found = bay.shelves.find((entry) => entry.id === shelfId)
-            if (found) return { shelf: found, section, room, floor }
+            const match = bay.shelves.find((entry) => entry.id === shelfId)
+            if (match) return { shelf: match, bay, section, room, floor }
           }
         }
       }
@@ -735,8 +144,45 @@ function ShelfDrawer({ shelfId, onClose }: { shelfId: number; onClose: () => voi
     return null
   }, [layout, shelfId])
 
-  if (!shelf) return null
+  const otherShelves = useMemo(() => {
+    if (!found) return []
+    const out: Array<{ id: number; label: string; sectionName: string; count: number; capacity: number }> = []
+    for (const section of found.room.sections) {
+      for (const bay of section.bays) {
+        for (const s of bay.shelves) {
+          if (s.id === shelfId) continue
+          out.push({
+            id: s.id,
+            label: shelfDisplayName(s),
+            sectionName: section.name,
+            count: s.bookCount,
+            capacity: s.capacity
+          })
+        }
+      }
+    }
+    return out.slice(0, 12)
+  }, [found, shelfId])
 
+  useEffect(() => {
+    if (!found) return
+    setNameDraft(found.shelf.label ?? '')
+    setSectionDraft(found.section.name)
+    setEditingSection(false)
+    setSavedNotice(null)
+    setAddingShelf(false)
+  }, [found])
+
+  useEffect(() => {
+    if (autoFocusRename && nameInputRef.current) {
+      nameInputRef.current.focus()
+      nameInputRef.current.select()
+    }
+  }, [autoFocusRename, shelfId])
+
+  if (!found) return null
+
+  const { shelf, bay, section, room, floor } = found
   const shelved = books
     .filter((book) => book.shelfId === shelfId)
     .sort((a, b) => a.slotIndex - b.slotIndex)
@@ -751,67 +197,397 @@ function ShelfDrawer({ shelfId, onClose }: { shelfId: number; onClose: () => voi
     setBusy(true)
     try {
       await window.alexandria.unshelveBook(book.id)
+      playSound('thud')
       await refresh()
     } finally {
       setBusy(false)
     }
   }
 
+  const moveBookToShelf = async (bookId: number, targetShelfId: number): Promise<void> => {
+    setBusy(true)
+    try {
+      await window.alexandria.moveBook(bookId, targetShelfId)
+      playSound('thud')
+      await refresh()
+      setSavedNotice('Moved book to target shelf')
+    } finally {
+      setBusy(false)
+      setDraggingBookId(null)
+      setDragOverShelfId(null)
+      setDragOverBookId(null)
+    }
+  }
+
+  const reorderWithinShelf = async (sourceId: number, targetId: number): Promise<void> => {
+    if (sourceId === targetId) return
+    const ids = shelved.map((b) => b.id)
+    const fromIdx = ids.indexOf(sourceId)
+    const toIdx = ids.indexOf(targetId)
+    if (fromIdx < 0 || toIdx < 0) return
+    ids.splice(fromIdx, 1)
+    ids.splice(toIdx, 0, sourceId)
+    setBusy(true)
+    try {
+      await window.alexandria.reorderShelf(shelf.id, ids)
+      playSound('thud')
+      await refresh()
+      setSavedNotice('Shelf order updated')
+    } finally {
+      setBusy(false)
+      setDraggingBookId(null)
+      setDragOverBookId(null)
+    }
+  }
+
+  const saveShelfName = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      const cleaned = nameDraft.trim()
+      await window.alexandria.updateContainer({
+        kind: 'shelf',
+        id: shelf.id,
+        label: cleaned.length > 0 ? cleaned : null
+      })
+      await refresh()
+      playSound('tick')
+      setSavedNotice(cleaned.length > 0 ? `Named "${cleaned}"` : 'Reset to default name')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const saveSectionName = async (): Promise<void> => {
+    const cleaned = sectionDraft.trim()
+    if (!cleaned) return
+    setBusy(true)
+    try {
+      await window.alexandria.updateContainer({
+        kind: 'section',
+        id: section.id,
+        name: cleaned
+      })
+      await refresh()
+      setEditingSection(false)
+      playSound('tick')
+      setSavedNotice(`Wing renamed to "${cleaned}"`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const addNewShelfToBay = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      const label = newShelfLabel.trim()
+      const createdId = await window.alexandria.createContainer({
+        kind: 'shelf',
+        parentId: bay.id,
+        name: label.length > 0 ? label : `Shelf ${bay.shelves.length + 1}`
+      })
+      await refresh()
+      playSound('tick')
+      setAddingShelf(false)
+      setNewShelfLabel('')
+      onSelectShelf(createdId)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeEmptyShelf = async (): Promise<void> => {
+    if (shelved.length > 0 || bay.shelves.length <= 1) return
+    setBusy(true)
+    try {
+      await window.alexandria.deleteContainer({ kind: 'shelf', id: shelf.id })
+      await refresh()
+      playSound('thud')
+      onClose()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const changeSort = async (mode: Shelf['sortMode']): Promise<void> => {
+    setBusy(true)
+    try {
+      await window.alexandria.updateContainer({
+        kind: 'shelf',
+        id: shelf.id,
+        sortMode: mode
+      })
+      await window.alexandria.resortShelf(shelf.id)
+      await refresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const currentLabel = shelfDisplayName(shelf)
+  const isDirty = (shelf.label ?? '') !== nameDraft.trim()
+
   return (
-    <aside className="shelf-drawer" aria-label="Shelf contents">
+    <aside className="shelf-drawer" aria-label="Shelf details">
       <header className="shelf-drawer__head">
-        <div>
-          <p className="eyebrow">
-            {shelf.floor.name} · {shelf.room.name} · {shelf.section.name}
-          </p>
-          <h2>Shelf {shelf.shelf.id}</h2>
+        <div className="shelf-drawer__identity">
+          {editingSection ? (
+            <form
+              className="shelf-drawer__section-form"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void saveSectionName()
+              }}
+            >
+              <input
+                type="text"
+                value={sectionDraft}
+                maxLength={48}
+                aria-label="Wing name"
+                onChange={(event) => setSectionDraft(event.target.value)}
+              />
+              <button type="submit" className="shelf-drawer__mini-btn" disabled={busy}>
+                Save
+              </button>
+              <button
+                type="button"
+                className="shelf-drawer__mini-btn"
+                onClick={() => {
+                  setSectionDraft(section.name)
+                  setEditingSection(false)
+                }}
+              >
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <p className="eyebrow shelf-drawer__crumb">
+              <span>
+                {floor.name} · {room.name} · {section.name}
+              </span>
+              <button
+                type="button"
+                className="shelf-drawer__crumb-edit"
+                onClick={() => setEditingSection(true)}
+                title="Rename this wall wing"
+              >
+                Rename wing
+              </button>
+            </p>
+          )}
+          <h2>{currentLabel}</h2>
         </div>
         <button className="icon-button" type="button" onClick={onClose} aria-label="Close shelf">
           ×
         </button>
       </header>
 
-      <p className="shelf-drawer__meta">
-        {shelved.length} of {shelf.shelf.capacity} slots · sorted by {shelf.shelf.sortMode}
-      </p>
+      <form
+        className="shelf-drawer__rename"
+        onSubmit={(event) => {
+          event.preventDefault()
+          void saveShelfName()
+        }}
+      >
+        <label className="shelf-drawer__rename-label" htmlFor="shelf-name-input">
+          Brass nameplate
+        </label>
+        <div className="shelf-drawer__rename-row">
+          <input
+            id="shelf-name-input"
+            ref={nameInputRef}
+            type="text"
+            value={nameDraft}
+            maxLength={64}
+            placeholder={`Shelf ${shelf.rowIndex + 1} (e.g. Philosophy, Sci-Fi)`}
+            onChange={(event) => {
+              setNameDraft(event.target.value)
+              setSavedNotice(null)
+            }}
+          />
+          <button
+            type="submit"
+            className="button shelf-drawer__save-btn"
+            disabled={busy || !isDirty}
+          >
+            Save
+          </button>
+        </div>
+        {savedNotice ? <p className="shelf-drawer__notice">{savedNotice}</p> : null}
+      </form>
+
+      <div className="shelf-drawer__bar">
+        <span className="shelf-drawer__meta">
+          {shelved.length} of {shelf.capacity} slots
+        </span>
+        <div className="shelf-drawer__bar-right">
+          <label className="shelf-drawer__sort">
+            <span>Order</span>
+            <select
+              value={shelf.sortMode}
+              disabled={busy}
+              onChange={(event) => void changeSort(event.target.value as Shelf['sortMode'])}
+            >
+              <option value="manual">Manual</option>
+              <option value="title">Title</option>
+              <option value="author">Author</option>
+              <option value="added">Date added</option>
+              <option value="read">Last read</option>
+              <option value="format">Format</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            className="shelf-drawer__mini-btn"
+            onClick={() => setAddingShelf((prev) => !prev)}
+            title="Add another shelf row to this bookcase"
+          >
+            + Shelf
+          </button>
+        </div>
+      </div>
+
+      {addingShelf ? (
+        <form
+          className="shelf-drawer__add-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void addNewShelfToBay()
+          }}
+        >
+          <input
+            type="text"
+            value={newShelfLabel}
+            maxLength={48}
+            placeholder={`New shelf name (e.g. Essays)`}
+            onChange={(e) => setNewShelfLabel(e.target.value)}
+            autoFocus
+          />
+          <button type="submit" className="shelf-drawer__mini-btn" disabled={busy}>
+            Add
+          </button>
+          <button
+            type="button"
+            className="shelf-drawer__mini-btn"
+            onClick={() => setAddingShelf(false)}
+          >
+            Cancel
+          </button>
+        </form>
+      ) : null}
+
+      {/* Live Drag-and-Drop Target Rail when dragging any book */}
+      {draggingBookId !== null && otherShelves.length > 0 ? (
+        <div className="shelf-drop-rail" aria-label="Drop on another shelf to move">
+          <p className="shelf-drop-rail__label">Drop onto another shelf to move</p>
+          <div className="shelf-drop-rail__chips">
+            {otherShelves.map((target) => (
+              <div
+                key={target.id}
+                className={`shelf-drop-target ${dragOverShelfId === target.id ? 'shelf-drop-target--hot' : ''}`}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  setDragOverShelfId(target.id)
+                }}
+                onDragLeave={() => setDragOverShelfId((curr) => (curr === target.id ? null : curr))}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  if (draggingBookId !== null) void moveBookToShelf(draggingBookId, target.id)
+                }}
+              >
+                <span>{target.label}</span>
+                <small>{target.sectionName}</small>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <ul className="shelf-drawer__list">
         {shelved.length === 0 ? (
-          <li className="shelf-drawer__empty">No volumes on this shelf yet.</li>
+          <li className="shelf-drawer__empty">
+            <p>This shelf is open for new books. Drop a PDF anywhere or drag books here.</p>
+            {bay.shelves.length > 1 ? (
+              <button
+                type="button"
+                className="shelf-drawer__mini-btn"
+                disabled={busy}
+                onClick={() => void removeEmptyShelf()}
+              >
+                Remove empty shelf
+              </button>
+            ) : null}
+          </li>
         ) : (
           shelved.map((book) => (
-            <li key={book.id} className="shelf-drawer__book">
+            <li
+              key={book.id}
+              draggable
+              onDragStart={(e) => {
+                setDraggingBookId(book.id)
+                e.dataTransfer.effectAllowed = 'move'
+                e.dataTransfer.setData('text/plain', String(book.id))
+              }}
+              onDragEnd={() => {
+                setDraggingBookId(null)
+                setDragOverBookId(null)
+                setDragOverShelfId(null)
+              }}
+              onDragOver={(e) => {
+                if (draggingBookId !== null && draggingBookId !== book.id) {
+                  e.preventDefault()
+                  setDragOverBookId(book.id)
+                }
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                if (draggingBookId !== null && draggingBookId !== book.id) {
+                  void reorderWithinShelf(draggingBookId, book.id)
+                }
+              }}
+              className={`shelf-drawer__book ${draggingBookId === book.id ? 'shelf-drawer__book--dragging' : ''} ${dragOverBookId === book.id ? 'shelf-drawer__book--over' : ''}`}
+            >
+              <span className="shelf-drawer__handle" title="Drag to reorder or drop onto another shelf">
+                ⋮⋮
+              </span>
               <button type="button" className="shelf-drawer__open" onClick={() => open(book)}>
                 <BookCover book={book} className="cover--mini" />
                 <span>
                   <span className="shelf-drawer__title">{book.title}</span>
-                  <span className="shelf-drawer__author">{book.author ?? 'Unknown author'}</span>
+                  <span className="shelf-drawer__author">
+                    {book.author ?? 'Unknown author'}
+                    {book.readingState === 'finished'
+                      ? ' · Finished'
+                      : book.pageCount
+                        ? ` · p. ${Math.max(1, book.lastPage)}/${book.pageCount}`
+                        : ''}
+                  </span>
                 </span>
               </button>
-              <button
-                type="button"
-                className="shelf-drawer__action"
-                title="Return to inbox"
-                onClick={() => void unshelve(book)}
-                disabled={busy}
-              >
-                Unshelve
-              </button>
+              <div className="shelf-drawer__row-actions">
+                <button
+                  type="button"
+                  className="shelf-drawer__action"
+                  title="Preview details, tags & move"
+                  onClick={() => onInspectBook(book)}
+                >
+                  Info
+                </button>
+                <button
+                  type="button"
+                  className="shelf-drawer__action"
+                  title="Return to inbox"
+                  onClick={() => void unshelve(book)}
+                  disabled={busy}
+                >
+                  Inbox
+                </button>
+              </div>
             </li>
           ))
         )}
       </ul>
     </aside>
   )
-}
-
-interface RoomStats {
-  fps: number
-  frameMs: number
-  drawCalls: number
-  triangles: number
-  books: number
-  bookBatches: number
 }
 
 export function RoomView({ library }: Props) {
@@ -822,17 +598,57 @@ export function RoomView({ library }: Props) {
   const setRoom = useUiStore((state) => state.setRoom)
   const openShelfId = useUiStore((state) => state.openShelfId)
   const openShelf = useUiStore((state) => state.openShelf)
+  const setSearchOpen = useUiStore((state) => state.setSearchOpen)
+  const setSettingsOpen = useUiStore((state) => state.setSettingsOpen)
+  const setTipsOpen = useUiStore((state) => state.setTipsOpen)
   const returningBookId = useUiStore((state) => state.returningBookId)
   const clearReturningBook = useUiStore((state) => state.clearReturningBook)
   const openBook = useReaderStore((state) => state.open)
   const quality = useSetting('ui.quality', 'auto')
   const reducedMotion = useSetting('ui.reducedMotion', 'false') === 'true'
+  const theme = normalizeHallTheme(useSetting('hall.theme', 'dark-academia'))
+  const mood = normalizeHallMood(useSetting('hall.mood', 'dusk'))
+  const setSettingValue = useSettingsStore((state) => state.setValue)
+
+  const studyRunning = useStudyStore((s) => s.running)
+  const studyModeType = useStudyStore((s) => s.mode)
+  const studyElapsed = useStudyStore((s) => s.elapsedSec)
+  const ambientEnabled = useAmbientStore((s) => s.enabled)
+
   const mountRef = useRef<HTMLDivElement | null>(null)
-  const [hovered, setHovered] = useState<string | null>(null)
-  const [scanning, setScanning] = useState(false)
+  const fpsToggleRef = useRef<(() => void) | null>(null)
+  const resetViewRef = useRef<(() => void) | null>(null)
+  const jumpToAnchorRef = useRef<((anchorId: string) => void) | null>(null)
+  const miniMapPoseRef = useRef<MiniMapPlayerPose>({ x: 0, y: 0, z: 5.15, yaw: 0 })
+  const cameraPoseRef = useRef<{
+    roomId: number
+    x: number
+    y: number
+    z: number
+    yaw: number
+    pitch: number
+    fov: number
+  } | null>(null)
+
+  const [hovered, setHovered] = useState<HoverTarget | null>(null)
+  const [fpsActive, setFpsActive] = useState(false)
+  const [dockOpen, setDockOpen] = useState(true)
+  const [placesOpen, setPlacesOpen] = useState(false)
+  const [atmosphereOpen, setAtmosphereOpen] = useState(false)
+  const [miniMapOpen, setMiniMapOpen] = useState(true)
   const [deskOpen, setDeskOpen] = useState(false)
-  const [stats, setStats] = useState<RoomStats | null>(null)
-  const [showStats, setShowStats] = useState(false)
+  const [renameFocus, setRenameFocus] = useState(false)
+  const [previewBook, setPreviewBook] = useState<Book | null>(null)
+  const [anchorList, setAnchorList] = useState<AnchorSummary[]>([])
+  const [miniMapMarkers, setMiniMapMarkers] = useState<MiniMapMarker[]>([])
+  const [scanning, setScanning] = useState(false)
+  const [contextLost, setContextLost] = useState(false)
+
+  // In-Hall New Wing Builder state
+  const [newWingOpen, setNewWingOpen] = useState(false)
+  const [newWingName, setNewWingName] = useState('')
+  const [newWingWall, setNewWingWall] = useState<Wall>('east')
+  const [creatingWing, setCreatingWing] = useState(false)
 
   const room = useMemo<Room | null>(() => {
     const direct = floors
@@ -842,17 +658,31 @@ export function RoomView({ library }: Props) {
     return floors[0]?.rooms[0] ?? null
   }, [floors, selection.roomId])
 
+  const allRooms = useMemo(
+    () =>
+      floors.flatMap((floor: Floor) =>
+        floor.rooms.map((entry) => ({
+          floor,
+          room: entry
+        }))
+      ),
+    [floors]
+  )
+
   const roomBooks = useMemo(
     () =>
-      books.filter((book) =>
-        room?.sections.some((section) =>
-          section.bays.some((bay) =>
-            bay.shelves.some((shelf) => shelf.id === book.shelfId)
+      books.filter(
+        (book) =>
+          book.shelfId === null ||
+          room?.sections.some((section) =>
+            section.bays.some((bay) => bay.shelves.some((shelf) => shelf.id === book.shelfId))
           )
-        )
       ),
     [books, room]
   )
+
+  const inboxCount = useMemo(() => books.filter((b) => b.shelfId === null).length, [books])
+  const missingCount = useMemo(() => books.filter((b) => b.missing).length, [books])
 
   useEffect(() => {
     if (!room) return
@@ -865,132 +695,217 @@ export function RoomView({ library }: Props) {
     const mount = mountRef.current
     if (!mount || !room) return
 
-    const preset = qualitySettings(quality)
+    const isSoftwareGl = detectSoftwareGl()
+    const useShadows = !isSoftwareGl && quality !== 'low'
+    const pixelRatio = isSoftwareGl
+      ? 1
+      : Math.min(window.devicePixelRatio, quality === 'low' ? 1 : quality === 'high' ? 2 : 1.5)
+    const moodRig = HALL_MOOD_RIGS[mood]
+
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color('#0c0a09')
-    scene.fog = new THREE.Fog('#0c0a09', 9, 18)
+    scene.background = new THREE.Color(moodRig.background)
+    scene.fog = new THREE.FogExp2(moodRig.fogColor, moodRig.fogDensity)
 
-    const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 60)
-    camera.position.set(0, 2.35, 6.1)
+    const savedPose = cameraPoseRef.current?.roomId === room.id ? cameraPoseRef.current : null
+    const camera = new THREE.PerspectiveCamera(savedPose?.fov ?? DEFAULT_FOV, 1, 0.08, 60)
+    camera.rotation.order = 'YXZ'
 
-    const renderer = new THREE.WebGLRenderer({ antialias: quality !== 'low', powerPreference: 'high-performance' })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, preset.pixelRatio))
-    renderer.shadowMap.enabled = preset.shadows
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    const renderer = new THREE.WebGLRenderer({
+      antialias: !isSoftwareGl && quality !== 'low',
+      powerPreference: 'high-performance'
+    })
+    renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
-    renderer.toneMappingExposure = 1.05
+    renderer.toneMappingExposure = moodRig.exposure
+    renderer.setPixelRatio(pixelRatio)
+    renderer.shadowMap.enabled = useShadows
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap
     mount.appendChild(renderer.domElement)
 
-    const controls = new OrbitControls(camera, renderer.domElement)
-    controls.target.set(0, 1.25, 0)
-    controls.enablePan = false
-    controls.enableDamping = true
-    controls.dampingFactor = 0.06
-    controls.minDistance = 3.2
-    controls.maxDistance = 8.5
-    controls.minPolarAngle = 0.75
-    controls.maxPolarAngle = 1.48
-    controls.minAzimuthAngle = -1.15
-    controls.maxAzimuthAngle = 1.15
-    controls.update()
+    const onContextLost = (e: Event): void => {
+      e.preventDefault()
+      setContextLost(true)
+    }
+    const onContextRestored = (): void => setContextLost(false)
+    renderer.domElement.addEventListener('webglcontextlost', onContextLost)
+    renderer.domElement.addEventListener('webglcontextrestored', onContextRestored)
 
-    const ambient = new THREE.AmbientLight('#6b5a45', 1.15)
-    scene.add(ambient)
+    const pmrem = new THREE.PMREMGenerator(renderer)
+    const envTarget = pmrem.fromScene(new RoomEnvironment(), 0.04)
+    scene.environment = envTarget.texture
+    scene.environmentIntensity = moodRig.envIntensity
+    pmrem.dispose()
 
-    const key = new THREE.SpotLight('#ffcf9a', 38, 14, Math.PI / 4.5, 0.6, 1.5)
-    key.position.set(2.6, 4.2, 2.4)
-    key.castShadow = preset.shadows
-    key.shadow.mapSize.set(preset.shadowMap, preset.shadowMap)
-    key.shadow.bias = -0.0004
-    scene.add(key)
+    const hemi = new THREE.HemisphereLight(moodRig.hemiSky, moodRig.hemiGround, moodRig.hemiIntensity)
+    scene.add(hemi)
 
-    const fill = new THREE.PointLight('#7c8ba0', 9, 13, 1.8)
-    fill.position.set(-3.2, 2.8, 1.8)
-    scene.add(fill)
+    const dirKey = new THREE.DirectionalLight(moodRig.keyColor, moodRig.keyIntensity)
+    dirKey.position.set(...moodRig.keyPos)
+    dirKey.castShadow = useShadows
+    if (useShadows) {
+      dirKey.shadow.mapSize.set(1024, 1024)
+      dirKey.shadow.camera.left = -9
+      dirKey.shadow.camera.right = 9
+      dirKey.shadow.camera.top = 9
+      dirKey.shadow.camera.bottom = -9
+      dirKey.shadow.camera.near = 0.5
+      dirKey.shadow.camera.far = 20
+      dirKey.shadow.bias = -0.0005
+      dirKey.shadow.normalBias = 0.02
+    }
+    scene.add(dirKey)
 
-    const built = buildScene(room, roomBooks, quality)
+    const duskFill = new THREE.DirectionalLight(moodRig.fillColor, moodRig.fillIntensity)
+    duskFill.position.set(-4.5, 5.8, -6.0)
+    scene.add(duskFill)
+
+    const built = buildLibraryScene(
+      room,
+      roomBooks,
+      quality,
+      renderer.capabilities.getMaxAnisotropy(),
+      isSoftwareGl,
+      theme,
+      mood
+    )
     scene.add(built.group)
+
+    setAnchorList(
+      built.anchors.map((a) => ({
+        id: a.id,
+        label: a.label,
+        meta: a.meta,
+        kind: a.kind,
+        level: a.level,
+        shelfId: a.shelfId
+      }))
+    )
+    setMiniMapMarkers(built.miniMapMarkers)
+
     if (built.bookMesh) {
-      built.bookMesh.userData.bookIds = built.placements.map((placement) => placement.book.id)
-      built.bookMesh.userData.shelfIds = built.placements.map((placement) => placement.shelfId)
+      built.bookMesh.userData.bookIds = built.placements.map((p) => p.book.id)
+      built.bookMesh.userData.shelfIds = built.placements.map((p) => p.shelfId)
       built.bookMesh.userData.placements = built.placements
       scene.add(built.bookMesh)
     }
 
     const placementsByBook = new Map<number, SpinePlacement>()
-    for (const placement of built.placements) placementsByBook.set(placement.book.id, placement)
+    for (const p of built.placements) placementsByBook.set(p.book.id, p)
 
-    const raycaster = new THREE.Raycaster()
-    const pointer = new THREE.Vector2()
+    const hoverBoxGeo = new THREE.BoxGeometry(1.06, 1.04, 1.18)
+    const hoverBoxMat = new THREE.MeshBasicMaterial({
+      color: '#ecc782',
+      wireframe: true,
+      transparent: true,
+      opacity: 0.78
+    })
+    const hoverHighlight = new THREE.Mesh(hoverBoxGeo, hoverBoxMat)
+    hoverHighlight.visible = false
+    scene.add(hoverHighlight)
 
-    const toPointer = (event: PointerEvent): void => {
-      const rect = renderer.domElement.getBoundingClientRect()
-      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
-      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
-    }
+    const floorCursorGeo = new THREE.RingGeometry(0.18, 0.23, 32)
+    const floorCursorMat = new THREE.MeshBasicMaterial({
+      color: '#d8b26e',
+      transparent: true,
+      opacity: 0.36,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    })
+    const floorCursor = new THREE.Mesh(floorCursorGeo, floorCursorMat)
+    floorCursor.rotation.x = -Math.PI / 2
+    floorCursor.position.y = 0.028
+    floorCursor.visible = false
+    scene.add(floorCursor)
 
-    const pick = (event: PointerEvent): { bookId?: number; shelfId?: number } | null => {
-      toPointer(event)
-      raycaster.setFromCamera(pointer, camera)
-      const hits = raycaster.intersectObjects(built.group.children, true)
-      if (built.bookMesh) hits.push(...raycaster.intersectObject(built.bookMesh, false))
-      hits.sort((a, b) => a.distance - b.distance)
+    const walkRingGeo = new THREE.RingGeometry(0.15, 0.24, 32)
+    const walkRingMat = new THREE.MeshBasicMaterial({
+      color: '#ecc782',
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    })
+    const walkRing = new THREE.Mesh(walkRingGeo, walkRingMat)
+    walkRing.rotation.x = -Math.PI / 2
+    walkRing.position.y = 0.032
+    scene.add(walkRing)
 
-      for (const hit of hits) {
-        if (hit.object === built.bookMesh && hit.faceIndex != null) {
-          const index = Math.floor(hit.faceIndex / 12)
-          const placement = built.placements[index]
-          if (placement) return { bookId: placement.book.id, shelfId: placement.shelfId }
-          continue
-        }
-        const data = hit.object.userData as { bookId?: number; shelfId?: number }
-        if (data.bookId) return { bookId: data.bookId, shelfId: data.shelfId }
-        if (data.shelfId) return { shelfId: data.shelfId }
-      }
-      return null
-    }
+    const spawnFloorPos = new THREE.Vector3(0, 0, 5.15)
+    const spawnLook = new THREE.Vector3(0, 1.55, -5.2)
+    const initialAngles = yawPitchFromLook(
+      new THREE.Vector3(spawnFloorPos.x, EYE_HEIGHT, spawnFloorPos.z),
+      spawnLook
+    )
 
-    let travel: {
-      from: THREE.Vector3
-      to: THREE.Vector3
-      targetFrom: THREE.Vector3
-      targetTo: THREE.Vector3
-      start: number
-      duration: number
+    // Track player FLOOR elevation y (0 on ground, 0..3.85 on stairs, 3.85 on mezzanine)
+    const playerFloor = savedPose
+      ? new THREE.Vector3(savedPose.x, savedPose.y, savedPose.z)
+      : spawnFloorPos.clone()
+    const targetFloor = playerFloor.clone()
+
+    let yaw = savedPose ? savedPose.yaw : initialAngles.yaw
+    let targetYaw = yaw
+    let pitch = savedPose ? savedPose.pitch : initialAngles.pitch
+    let targetPitch = pitch
+    let targetFov = savedPose ? savedPose.fov : DEFAULT_FOV
+    let walkBobPhase = 0
+    let ringFade = 0
+    let globeSpinBoost = 0
+    let lightningFlash = 0
+    let nextLightningAt = performance.now() + 7000 + Math.random() * 11000
+
+    camera.position.set(playerFloor.x, playerFloor.y + EYE_HEIGHT, playerFloor.z)
+    camera.rotation.set(pitch, yaw, 0, 'YXZ')
+
+    let glide: {
+      toFloor: THREE.Vector3
+      toYaw?: number
+      toPitch?: number
     } | null = null
 
-    const flyTo = (shelfId: number): void => {
-      const anchor = built.anchors.get(shelfId)
-      if (!anchor) return
+    const glideTo = (eyeOrFloorPos: THREE.Vector3, lookAt?: THREE.Vector3, floorY?: number): void => {
+      const resolvedFloorY = floorY !== undefined ? floorY : Math.max(0, eyeOrFloorPos.y - EYE_HEIGHT)
+      const destFloor = new THREE.Vector3(eyeOrFloorPos.x, resolvedFloorY, eyeOrFloorPos.z)
+      const destEye = new THREE.Vector3(destFloor.x, destFloor.y + EYE_HEIGHT, destFloor.z)
+      const next: { toFloor: THREE.Vector3; toYaw?: number; toPitch?: number } = { toFloor: destFloor }
+      if (lookAt) {
+        const angles = yawPitchFromLook(destEye, lookAt)
+        next.toYaw = angles.yaw
+        next.toPitch = angles.pitch
+      }
       if (reducedMotion) {
-        camera.position.copy(anchor.position)
-        controls.target.copy(anchor.target)
-        controls.update()
+        playerFloor.copy(destFloor)
+        targetFloor.copy(destFloor)
+        if (next.toYaw !== undefined) {
+          yaw = next.toYaw
+          targetYaw = next.toYaw
+        }
+        if (next.toPitch !== undefined) {
+          pitch = next.toPitch
+          targetPitch = next.toPitch
+        }
+        glide = null
         return
       }
-      travel = {
-        from: camera.position.clone(),
-        to: anchor.position.clone(),
-        targetFrom: controls.target.clone(),
-        targetTo: anchor.target.clone(),
-        start: performance.now(),
-        duration: 850
-      }
-      controls.enabled = false
+      glide = next
     }
 
-    // Enter the hall from the doorway, then settle into the reading position.
-    if (!reducedMotion) {
-      camera.position.set(0, 3.1, 8.4)
-      travel = {
-        from: camera.position.clone(),
-        to: new THREE.Vector3(0, 2.35, 6.1),
-        targetFrom: new THREE.Vector3(0, 1.55, 0),
-        targetTo: new THREE.Vector3(0, 1.25, 0),
-        start: performance.now(),
-        duration: 1100
-      }
-      controls.enabled = false
+    resetViewRef.current = () => {
+      targetFov = DEFAULT_FOV
+      glideTo(spawnFloorPos, spawnLook, 0)
+    }
+
+    const flyToShelf = (shelfId: number): void => {
+      const anchor = built.shelfAnchors.get(shelfId)
+      if (!anchor) return
+      glideTo(anchor.position, anchor.lookAt, anchor.level === 2 ? GALLERY_Y : 0)
+    }
+
+    jumpToAnchorRef.current = (anchorId: string) => {
+      const anchor = built.anchors.find((a) => a.id === anchorId)
+      if (!anchor) return
+      playSound('tick')
+      glideTo(anchor.position, anchor.lookAt, anchor.level === 2 ? GALLERY_Y : 0)
     }
 
     interface PullFlight {
@@ -1010,31 +925,33 @@ export function RoomView({ library }: Props) {
 
     const proxyMaterial = (book: Book): THREE.MeshStandardMaterial =>
       new THREE.MeshStandardMaterial({
-        color: bookColors[book.id % bookColors.length],
-        roughness: 0.68,
-        metalness: 0.04
+        color: BOOK_COLORS[book.id % BOOK_COLORS.length],
+        roughness: 0.62,
+        metalness: 0.06
       })
 
     const pullBook = (placement: SpinePlacement, book: Book): void => {
-      const proxy = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.3, 0.22), proxyMaterial(book))
-      proxy.position.copy(placement.position).addScaledVector(placement.normal, 0.02)
+      const proxy = new THREE.Mesh(
+        new THREE.BoxGeometry(placement.size.x, placement.size.y, placement.size.z),
+        proxyMaterial(book)
+      )
+      proxy.position.copy(placement.position).addScaledVector(placement.normal, 0.03)
       proxy.rotation.y = Math.atan2(placement.normal.x, placement.normal.z)
-      proxy.castShadow = true
       scene.add(proxy)
 
       const forward = new THREE.Vector3()
       camera.getWorldDirection(forward)
       const destination = camera.position
         .clone()
-        .addScaledVector(forward, 1.05)
-        .add(new THREE.Vector3(0, -0.25, 0))
+        .addScaledVector(forward, 0.95)
+        .add(new THREE.Vector3(0, -0.18, 0))
 
       pull = {
         mesh: proxy,
         from: proxy.position.clone(),
         to: destination,
         start: performance.now(),
-        duration: 460,
+        duration: 420,
         bookId: book.id,
         page: book.lastPage,
         opened: false
@@ -1049,106 +966,597 @@ export function RoomView({ library }: Props) {
         return
       }
       const book = placement.book
-      const proxy = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.3, 0.22), proxyMaterial(book))
+      clearReturningBook()
+      flyToShelf(placement.shelfId)
+
+      if (reducedMotion) return
+
+      const proxy = new THREE.Mesh(
+        new THREE.BoxGeometry(placement.size.x, placement.size.y, placement.size.z),
+        proxyMaterial(book)
+      )
       const forward = new THREE.Vector3()
       camera.getWorldDirection(forward)
-      proxy.position.copy(camera.position).addScaledVector(forward, 1.05)
+      proxy.position.copy(camera.position).addScaledVector(forward, 1.0)
       scene.add(proxy)
-
-      clearReturningBook()
-
-      if (reducedMotion) {
-        scene.remove(proxy)
-        proxy.geometry.dispose()
-        ;(proxy.material as THREE.Material).dispose()
-        flyTo(placement.shelfId)
-        return
-      }
 
       arrive = {
         mesh: proxy,
         from: proxy.position.clone(),
-        to: placement.position.clone().addScaledVector(placement.normal, 0.02),
+        to: placement.position.clone().addScaledVector(placement.normal, 0.03),
         start: performance.now(),
-        duration: 480,
+        duration: 450,
         bookId: book.id,
         page: null,
         opened: true
       }
-      flyTo(placement.shelfId)
     }
 
-    const onPointerMove = (event: PointerEvent): void => {
-      if (travel || pull) return
-      const target = pick(event)
-      renderer.domElement.style.cursor = target ? 'pointer' : 'grab'
+    const raycaster = new THREE.Raycaster()
+    const pointerNdc = new THREE.Vector2(0, 0)
+    const keys = new Set<string>()
+    let isDragging = false
+    let dragMoved = false
+    let lastPointerX = 0
+    let lastPointerY = 0
+    let lastHoverTime = 0
+    let activeHover: HoverTarget | null = null
 
-      if (!target?.bookId) {
-        setHovered(null)
-        return
+    const raycastAt = (
+      ndcX: number,
+      ndcY: number
+    ): {
+      target: HoverTarget | null
+      floorPoint: THREE.Vector3 | null
+      placement: SpinePlacement | null
+    } => {
+      pointerNdc.set(ndcX, ndcY)
+      raycaster.setFromCamera(pointerNdc, camera)
+
+      const hits: THREE.Intersection[] = []
+      if (built.bookMesh) hits.push(...raycaster.intersectObject(built.bookMesh, false))
+      hits.push(...raycaster.intersectObjects(built.interactables, false))
+      hits.sort((a, b) => a.distance - b.distance)
+
+      for (const hit of hits) {
+        if (hit.object === built.bookMesh && hit.faceIndex != null) {
+          const idx = Math.floor(hit.faceIndex / 12)
+          const placement = built.placements[idx]
+          if (placement) {
+            return {
+              target: {
+                label: placement.book.title,
+                hint: placement.book.author
+                  ? `Click to read · Right-click to preview · ${placement.book.author}`
+                  : 'Click to read · Right-click to preview',
+                bookId: placement.book.id,
+                shelfId: placement.shelfId
+              },
+              floorPoint: null,
+              placement
+            }
+          }
+          continue
+        }
+
+        const data = hit.object.userData as {
+          bookId?: number
+          shelfId?: number
+          interactiveKind?: 'desk' | 'gramophone' | 'globe' | 'fireplace' | 'balcony'
+          interactLabel?: string
+          interactMeta?: string
+          walkableFloor?: boolean
+        }
+
+        if (data.bookId) {
+          const found = roomBooks.find((b) => b.id === data.bookId)
+          if (found) {
+            return {
+              target: {
+                label: found.title,
+                hint: 'Click to read · Right-click to preview',
+                bookId: found.id
+              },
+              floorPoint: null,
+              placement: null
+            }
+          }
+        }
+        if (data.interactiveKind === 'desk') {
+          return {
+            target: {
+              label: 'Reading Desk',
+              hint: 'Click to open Desk, Inbox & Study Stats',
+              kind: 'desk'
+            },
+            floorPoint: null,
+            placement: null
+          }
+        }
+        if (data.interactiveKind === 'globe') {
+          return {
+            target: {
+              label: 'Hall Atlas Globe',
+              hint: 'Click to open Library Map',
+              kind: 'globe'
+            },
+            floorPoint: null,
+            placement: null
+          }
+        }
+        if (data.interactiveKind === 'gramophone') {
+          return {
+            target: {
+              label: 'Brass Gramophone',
+              hint: 'Click to toggle ambient soundscape or music',
+              kind: 'gramophone'
+            },
+            floorPoint: null,
+            placement: null
+          }
+        }
+        if (data.interactiveKind === 'fireplace') {
+          return {
+            target: {
+              label: 'Hall Fireplace Hearth',
+              hint: 'Click to toggle crackling fireplace audio',
+              kind: 'fireplace'
+            },
+            floorPoint: null,
+            placement: null
+          }
+        }
+        if (data.interactiveKind === 'balcony') {
+          return {
+            target: {
+              label: 'Observatory Telescope',
+              hint: 'Click to overlook the Grand Hall from the mezzanine',
+              kind: 'balcony'
+            },
+            floorPoint: null,
+            placement: null
+          }
+        }
+        if (data.shelfId) {
+          return {
+            target: {
+              label: data.interactLabel ?? 'Bookshelf',
+              hint: data.interactMeta ?? 'Click to open, reorder or rename shelf',
+              shelfId: data.shelfId
+            },
+            floorPoint: null,
+            placement: null
+          }
+        }
+        if (data.walkableFloor) {
+          return { target: null, floorPoint: hit.point.clone(), placement: null }
+        }
       }
 
-      const book = roomBooks.find((entry) => entry.id === target.bookId)
-      setHovered(book ? book.title : null)
+      return { target: null, floorPoint: null, placement: null }
     }
 
-    const onClick = (event: PointerEvent): void => {
+    const triggerInteract = (
+      target: HoverTarget | null,
+      floorPoint: THREE.Vector3 | null
+    ): void => {
       if (pull) return
-      const target = pick(event)
-      if (!target) return
 
-      if (target.bookId) {
-        const book = roomBooks.find((entry) => entry.id === target.bookId)
-        const placement = placementsByBook.get(target.bookId)
-        if (!book || !placement) return
-
+      if (target?.bookId) {
+        const book = roomBooks.find((b) => b.id === target.bookId)
+        if (!book) return
         playSound('pull')
-        if (reducedMotion) {
+        if (document.pointerLockElement === renderer.domElement) {
+          document.exitPointerLock()
+        }
+        const placement = placementsByBook.get(book.id)
+        if (reducedMotion || !placement) {
           openBook(book.id, book.lastPage)
           navigate('reader')
           return
         }
-        flyTo(placement.shelfId)
+        flyToShelf(placement.shelfId)
         pullBook(placement, book)
-      } else if (target.shelfId) {
+        return
+      }
+
+      if (target?.kind === 'desk') {
         playSound('tick')
+        if (document.pointerLockElement === renderer.domElement) {
+          document.exitPointerLock()
+        }
+        glideTo(new THREE.Vector3(0, EYE_HEIGHT, 2.65), new THREE.Vector3(0, 0.96, 0.35), 0)
+        setPlacesOpen(false)
+        setAtmosphereOpen(false)
+        setDeskOpen(true)
+        return
+      }
+
+      if (target?.kind === 'globe') {
+        playSound('tick')
+        globeSpinBoost = 7
+        if (document.pointerLockElement === renderer.domElement) {
+          document.exitPointerLock()
+        }
+        navigate('map')
+        return
+      }
+
+      if (target?.kind === 'gramophone') {
+        playSound('tick')
+        const player = usePlayerStore.getState()
+        if (player.tracks.length > 0) {
+          player.toggle()
+        } else {
+          useAmbientStore.getState().toggleEnabled()
+        }
+        return
+      }
+
+      if (target?.kind === 'fireplace') {
+        playSound('tick')
+        const amb = useAmbientStore.getState()
+        if (!amb.enabled || amb.fire < 0.1) {
+          amb.setChannel('fire', 0.6)
+          amb.setEnabled(true)
+        } else {
+          amb.setChannel('fire', 0)
+        }
+        return
+      }
+
+      if (target?.kind === 'balcony') {
+        playSound('tick')
+        jumpToAnchorRef.current?.('balcony')
+        return
+      }
+
+      if (target?.shelfId) {
+        playSound('tick')
+        if (document.pointerLockElement === renderer.domElement) {
+          document.exitPointerLock()
+        }
+        setPlacesOpen(false)
+        setAtmosphereOpen(false)
+        setRenameFocus(false)
         openShelf(target.shelfId)
-        flyTo(target.shelfId)
+        flyToShelf(target.shelfId)
+        return
+      }
+
+      if (floorPoint) {
+        playSound('tick')
+        setPlacesOpen(false)
+        setAtmosphereOpen(false)
+        const targetFloorY = floorPoint.y > 0.3 ? Math.min(GALLERY_Y, floorPoint.y) : 0
+        walkRing.position.set(floorPoint.x, targetFloorY + 0.032, floorPoint.z)
+        ringFade = 1
+        const resolved = resolveWalkPosition(
+          { x: floorPoint.x, y: targetFloorY, z: floorPoint.z },
+          { x: floorPoint.x, z: floorPoint.z }
+        )
+        glideTo(new THREE.Vector3(resolved.x, resolved.y + EYE_HEIGHT, resolved.z), undefined, resolved.y)
       }
     }
 
-    renderer.domElement.addEventListener('pointermove', onPointerMove)
-    renderer.domElement.addEventListener('click', onClick)
+    const updateHoverVisual = (ndcX: number, ndcY: number): void => {
+      const now = performance.now()
+      if (now - lastHoverTime < 40) return
+      lastHoverTime = now
 
-    // Arrow keys walk the shelves, so the room is usable without a mouse.
-    const shelfIds = [...built.anchors.keys()].sort((a, b) => a - b)
-    let shelfCursor = -1
-    const onKeyDown = (event: KeyboardEvent): void => {
-      const target = event.target as HTMLElement | null
-      if (
-        target &&
-        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')
-      ) {
+      const { target, floorPoint, placement } = raycastAt(ndcX, ndcY)
+      activeHover = target
+      setHovered((prev) =>
+        prev?.label === target?.label && prev?.hint === target?.hint ? prev : target
+      )
+
+      if (placement) {
+        hoverHighlight.visible = true
+        hoverHighlight.position.copy(placement.position).addScaledVector(placement.normal, 0.025)
+        hoverHighlight.quaternion.setFromRotationMatrix(placement.matrix)
+        hoverHighlight.scale.copy(placement.size)
+      } else {
+        hoverHighlight.visible = false
+      }
+
+      const locked = document.pointerLockElement === renderer.domElement
+      if (!target && floorPoint && !isDragging && !locked) {
+        floorCursor.visible = true
+        floorCursor.position.set(floorPoint.x, floorPoint.y + 0.028, floorPoint.z)
+      } else {
+        floorCursor.visible = false
+      }
+
+      if (!isDragging && !locked) {
+        renderer.domElement.style.cursor = target ? 'pointer' : floorPoint ? 'pointer' : 'grab'
+      }
+    }
+
+    const onPointerDown = (event: PointerEvent): void => {
+      if (event.button !== 0 && event.button !== 2) return
+      setPlacesOpen(false)
+      setAtmosphereOpen(false)
+      if (document.pointerLockElement === renderer.domElement) {
+        const res = raycastAt(0, 0)
+        triggerInteract(res.target, res.floorPoint)
         return
       }
-      if (event.key === 'Escape') {
-        openShelf(null)
+      isDragging = true
+      dragMoved = false
+      lastPointerX = event.clientX
+      lastPointerY = event.clientY
+      floorCursor.visible = false
+      renderer.domElement.style.cursor = 'grabbing'
+    }
+
+    const onPointerMove = (event: PointerEvent): void => {
+      if (document.pointerLockElement === renderer.domElement) {
+        targetYaw -= event.movementX * 0.0023
+        targetPitch = Math.max(-1.05, Math.min(1.05, targetPitch - event.movementY * 0.0021))
+        if (glide) {
+          glide.toYaw = undefined
+          glide.toPitch = undefined
+        }
+        updateHoverVisual(0, 0)
         return
       }
-      if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
-      if (shelfIds.length === 0) return
+
+      if (isDragging) {
+        const dx = event.clientX - lastPointerX
+        const dy = event.clientY - lastPointerY
+        if (Math.abs(dx) + Math.abs(dy) > 4) dragMoved = true
+        lastPointerX = event.clientX
+        lastPointerY = event.clientY
+        targetYaw -= dx * 0.004
+        targetPitch = Math.max(-1.05, Math.min(1.05, targetPitch - dy * 0.0034))
+        if (glide) {
+          glide.toYaw = undefined
+          glide.toPitch = undefined
+        }
+        return
+      }
+
+      const rect = renderer.domElement.getBoundingClientRect()
+      const nx = ((event.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1
+      const ny = -((event.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1
+      updateHoverVisual(nx, ny)
+    }
+
+    const onPointerUp = (event: PointerEvent): void => {
+      if (document.pointerLockElement === renderer.domElement) return
+      const wasLeftClick = isDragging && !dragMoved && event.button === 0
+      const wasRightClick = isDragging && !dragMoved && event.button === 2
+      isDragging = false
+      renderer.domElement.style.cursor = activeHover ? 'pointer' : 'grab'
+
+      if (wasLeftClick || wasRightClick) {
+        const rect = renderer.domElement.getBoundingClientRect()
+        const nx = ((event.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1
+        const ny = -((event.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1
+        const res = raycastAt(nx, ny)
+
+        if (wasRightClick && res.target?.bookId) {
+          const book = roomBooks.find((b) => b.id === res.target?.bookId)
+          if (book) {
+            playSound('tick')
+            setPreviewBook(book)
+          }
+          return
+        }
+
+        if (wasLeftClick) {
+          triggerInteract(res.target, res.floorPoint)
+        }
+      }
+    }
+
+    const onWheel = (event: WheelEvent): void => {
       event.preventDefault()
-      shelfCursor =
-        event.key === 'ArrowRight'
-          ? (shelfCursor + 1) % shelfIds.length
-          : (shelfCursor - 1 + shelfIds.length) % shelfIds.length
-      const shelfId = shelfIds[shelfCursor]
-      if (shelfId === undefined) return
-      playSound('tick')
-      openShelf(shelfId)
-      flyTo(shelfId)
+      if (event.altKey || event.ctrlKey) {
+        targetFov = Math.max(MIN_FOV, Math.min(MAX_FOV, targetFov + Math.sign(event.deltaY) * 4))
+        return
+      }
+      glide = null
+      const step = -Math.sign(event.deltaY) * 0.65
+      const forwardX = -Math.sin(targetYaw)
+      const forwardZ = -Math.cos(targetYaw)
+      const resolved = resolveWalkPosition(targetFloor, {
+        x: targetFloor.x + forwardX * step,
+        z: targetFloor.z + forwardZ * step
+      })
+      targetFloor.set(resolved.x, resolved.y, resolved.z)
     }
+
+    const onContextMenu = (event: MouseEvent): void => {
+      event.preventDefault()
+    }
+
+    const onPointerLockChange = (): void => {
+      const locked = document.pointerLockElement === renderer.domElement
+      setFpsActive(locked)
+      if (!locked) {
+        renderer.domElement.style.cursor = 'grab'
+      } else {
+        floorCursor.visible = false
+        setPlacesOpen(false)
+        setAtmosphereOpen(false)
+      }
+    }
+
+    fpsToggleRef.current = () => {
+      if (document.pointerLockElement === renderer.domElement) {
+        document.exitPointerLock()
+      } else {
+        renderer.domElement.requestPointerLock?.()
+      }
+    }
+
+    let anchorIndex = 0
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const el = event.target as HTMLElement | null
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) {
+        return
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) return
+
+      const code = event.code
+      if (
+        code === 'KeyW' ||
+        code === 'KeyA' ||
+        code === 'KeyS' ||
+        code === 'KeyD' ||
+        code === 'KeyQ' ||
+        code === 'ArrowUp' ||
+        code === 'ArrowDown' ||
+        code === 'ArrowLeft' ||
+        code === 'ArrowRight' ||
+        code === 'ShiftLeft' ||
+        code === 'ShiftRight'
+      ) {
+        keys.add(code)
+        glide = null
+        return
+      }
+
+      if (code === 'KeyE') {
+        if (document.pointerLockElement === renderer.domElement) {
+          event.preventDefault()
+          const res = raycastAt(0, 0)
+          triggerInteract(res.target, null)
+          return
+        }
+        keys.add(code)
+        glide = null
+        return
+      }
+
+      if (code === 'Tab') {
+        event.preventDefault()
+        fpsToggleRef.current?.()
+        return
+      }
+
+      if (code === 'Equal' || code === 'NumpadAdd') {
+        event.preventDefault()
+        targetFov = Math.max(MIN_FOV, targetFov - 5)
+        return
+      }
+      if (code === 'Minus' || code === 'NumpadSubtract') {
+        event.preventDefault()
+        targetFov = Math.min(MAX_FOV, targetFov + 5)
+        return
+      }
+
+      if (code.startsWith('Digit')) {
+        const digit = Number(code.slice(5))
+        if (digit >= 1 && digit <= 9) {
+          const anchor = built.anchors[digit - 1]
+          if (anchor) {
+            event.preventDefault()
+            anchorIndex = digit - 1
+            playSound('tick')
+            glideTo(anchor.position, anchor.lookAt, anchor.level === 2 ? GALLERY_Y : 0)
+          }
+          return
+        }
+      }
+
+      if (code === 'BracketRight' || code === 'BracketLeft') {
+        if (built.anchors.length === 0) return
+        event.preventDefault()
+        anchorIndex =
+          code === 'BracketRight'
+            ? (anchorIndex + 1) % built.anchors.length
+            : (anchorIndex - 1 + built.anchors.length) % built.anchors.length
+        const nextAnchor = built.anchors[anchorIndex]
+        if (nextAnchor) {
+          playSound('tick')
+          glideTo(nextAnchor.position, nextAnchor.lookAt, nextAnchor.level === 2 ? GALLERY_Y : 0)
+        }
+        return
+      }
+
+      if (code === 'KeyR') {
+        event.preventDefault()
+        targetFov = DEFAULT_FOV
+        glideTo(spawnFloorPos, spawnLook, 0)
+        return
+      }
+
+      if (code === 'KeyH') {
+        event.preventDefault()
+        setDockOpen((prev) => !prev)
+        return
+      }
+
+      if (code === 'KeyP') {
+        event.preventDefault()
+        setAtmosphereOpen(false)
+        setPlacesOpen((prev) => !prev)
+        return
+      }
+
+      if (code === 'KeyT') {
+        event.preventDefault()
+        setPlacesOpen(false)
+        setAtmosphereOpen((prev) => !prev)
+        return
+      }
+
+      if (code === 'KeyN') {
+        event.preventDefault()
+        setMiniMapOpen((prev) => !prev)
+        return
+      }
+
+      if (code === 'KeyM') {
+        event.preventDefault()
+        if (document.pointerLockElement) document.exitPointerLock()
+        navigate('map')
+        return
+      }
+
+      if (code === 'KeyI') {
+        event.preventDefault()
+        if (document.pointerLockElement) document.exitPointerLock()
+        navigate('index')
+        return
+      }
+
+      if (code === 'KeyL') {
+        event.preventDefault()
+        if (document.pointerLockElement) document.exitPointerLock()
+        navigate('librarian')
+        return
+      }
+
+      if (code === 'Escape') {
+        openShelf(null)
+        setDeskOpen(false)
+        setPlacesOpen(false)
+        setAtmosphereOpen(false)
+        setPreviewBook(null)
+      }
+    }
+
+    const onKeyUp = (event: KeyboardEvent): void => {
+      keys.delete(event.code)
+    }
+
+    const onWindowBlur = (): void => {
+      keys.clear()
+      isDragging = false
+    }
+
+    renderer.domElement.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    renderer.domElement.addEventListener('wheel', onWheel, { passive: false })
+    renderer.domElement.addEventListener('contextmenu', onContextMenu)
+    document.addEventListener('pointerlockchange', onPointerLockChange)
     window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onWindowBlur)
 
     const resize = (): void => {
       const width = mount.clientWidth
@@ -1157,48 +1565,164 @@ export function RoomView({ library }: Props) {
       camera.aspect = width / Math.max(1, height)
       camera.updateProjectionMatrix()
     }
-
     resize()
     const observer = new ResizeObserver(resize)
     observer.observe(mount)
 
-    let frame = 0
-    let lastRender = 0
+    if (!isSoftwareGl) {
+      renderer.compile(scene, camera)
+    }
+
+    let frameId = 0
+    let disposed = false
+    let lastNow = performance.now()
     let frames = 0
-    let since = performance.now()
-    let frameMs = 0
+    let statsSince = lastNow
+    let avgFrameMs = 16
 
-    const animate = (now: number): void => {
-      frame = requestAnimationFrame(animate)
-
-      if (document.hidden) return
-      const interval = document.hasFocus() ? 0 : 1000 / 15
-      if (interval > 0 && now - lastRender < interval) return
-      const delta = lastRender === 0 ? 16 : now - lastRender
-      lastRender = now
-      frameMs = frameMs === 0 ? delta : frameMs * 0.9 + delta * 0.1
-
-      if (travel) {
-        const progress = Math.min(1, (now - travel.start) / travel.duration)
-        const eased = progress * progress * (3 - 2 * progress)
-        camera.position.lerpVectors(travel.from, travel.to, eased)
-        controls.target.lerpVectors(travel.targetFrom, travel.targetTo, eased)
-        camera.lookAt(controls.target)
-        if (progress >= 1) {
-          travel = null
-          controls.enabled = true
-          controls.update()
+    const afterDraw = (cb: () => void): void => {
+      const gl = renderer.getContext() as WebGL2RenderingContext
+      const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
+      gl.flush()
+      const poll = (): void => {
+        if (disposed) return
+        const state = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS)
+        if (state === gl.UNSIGNALED) {
+          frameId = window.setTimeout(poll, 5)
+        } else {
+          if (sync) gl.deleteSync(sync)
+          frameId = window.setTimeout(cb, 70)
         }
+      }
+      frameId = window.setTimeout(poll, 5)
+    }
+
+    const scheduleNext = (): void => {
+      if (disposed) return
+      if (isSoftwareGl) {
+        afterDraw(tick)
       } else {
-        controls.update()
+        frameId = requestAnimationFrame(tick)
+      }
+    }
+
+    const tick = (): void => {
+      if (disposed) return
+      const now = performance.now()
+      const dt = Math.min(0.08, Math.max(0.001, (now - lastNow) / 1000))
+      lastNow = now
+
+      if (document.hidden) {
+        scheduleNext()
+        return
       }
 
+      avgFrameMs = avgFrameMs * 0.9 + dt * 1000 * 0.1
+
+      // 1. WASD / Arrow first-person walking with continuous staircase & mezzanine elevation physics
+      const moveForward =
+        (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) -
+        (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0)
+      const moveRight =
+        (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) -
+        (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0)
+      const turnInput = (keys.has('KeyQ') ? 1 : 0) - (keys.has('KeyE') ? 1 : 0)
+
+      if (turnInput !== 0 && document.pointerLockElement !== renderer.domElement) {
+        targetYaw += turnInput * 1.95 * dt
+      }
+
+      const isMoving = moveForward !== 0 || moveRight !== 0
+      if (isMoving) {
+        const speed = keys.has('ShiftLeft') || keys.has('ShiftRight') ? 5.6 : 3.4
+        const len = Math.hypot(moveForward, moveRight) || 1
+        const f = moveForward / len
+        const r = moveRight / len
+        const forwardX = -Math.sin(yaw)
+        const forwardZ = -Math.cos(yaw)
+        const rightX = Math.cos(yaw)
+        const rightZ = -Math.sin(yaw)
+        const resolved = resolveWalkPosition(targetFloor, {
+          x: targetFloor.x + (forwardX * f + rightX * r) * speed * dt,
+          z: targetFloor.z + (forwardZ * f + rightZ * r) * speed * dt
+        })
+        targetFloor.set(resolved.x, resolved.y, resolved.z)
+      }
+
+      // 2. Smooth click-to-walk / waypoint glide (including between Ground and Mezzanine!)
+      if (glide) {
+        targetFloor.copy(glide.toFloor)
+        if (glide.toYaw !== undefined) {
+          targetYaw = yaw + shortestAngleDelta(yaw, glide.toYaw)
+        }
+        if (glide.toPitch !== undefined) {
+          targetPitch = glide.toPitch
+        }
+        const dist = playerFloor.distanceTo(glide.toFloor)
+        const angleDist =
+          glide.toYaw !== undefined ? Math.abs(shortestAngleDelta(yaw, glide.toYaw)) : 0
+        if (dist < 0.05 && angleDist < 0.025) {
+          glide = null
+        }
+      }
+
+      // 3. Exponential damping for weighty, silky camera motion & vertical stair elevation
+      const posLambda = glide ? 4.8 : 9.5
+      const rotLambda = 12
+      playerFloor.x = THREE.MathUtils.damp(playerFloor.x, targetFloor.x, posLambda, dt)
+      playerFloor.y = THREE.MathUtils.damp(playerFloor.y, targetFloor.y, glide ? 4.8 : 11, dt)
+      playerFloor.z = THREE.MathUtils.damp(playerFloor.z, targetFloor.z, posLambda, dt)
+      yaw = THREE.MathUtils.damp(yaw, targetYaw, rotLambda, dt)
+      pitch = THREE.MathUtils.damp(pitch, targetPitch, rotLambda, dt)
+
+      if (Math.abs(camera.fov - targetFov) > 0.05) {
+        camera.fov = THREE.MathUtils.damp(camera.fov, targetFov, 10, dt)
+        camera.updateProjectionMatrix()
+      }
+
+      // Update saved pose & live mini-map ref (zero React state churn!)
+      cameraPoseRef.current = {
+        roomId: room.id,
+        x: playerFloor.x,
+        y: playerFloor.y,
+        z: playerFloor.z,
+        yaw,
+        pitch,
+        fov: targetFov
+      }
+      miniMapPoseRef.current = {
+        x: playerFloor.x,
+        y: playerFloor.y,
+        z: playerFloor.z,
+        yaw
+      }
+
+      const speedNow = Math.hypot(targetFloor.x - playerFloor.x, targetFloor.z - playerFloor.z)
+      let bobY = 0
+      if (!reducedMotion && (isMoving || speedNow > 0.14)) {
+        walkBobPhase += dt * 9.5
+        bobY = Math.sin(walkBobPhase) * 0.024
+      } else {
+        walkBobPhase = 0
+      }
+
+      camera.position.set(playerFloor.x, playerFloor.y + EYE_HEIGHT + bobY, playerFloor.z)
+      camera.rotation.set(pitch, yaw, 0, 'YXZ')
+
+      // 4. Floor destination ring animation
+      if (ringFade > 0) {
+        ringFade = Math.max(0, ringFade - dt * 1.45)
+        walkRingMat.opacity = ringFade * 0.8
+        walkRing.scale.setScalar(1 + (1 - ringFade) * 0.6)
+      }
+
+      // 5. Book pull / return flights
       if (pull) {
         const progress = Math.min(1, (now - pull.start) / pull.duration)
         const eased = progress * progress * (3 - 2 * progress)
         pull.mesh.position.lerpVectors(pull.from, pull.to, eased)
-        pull.mesh.rotation.y += 0.012
-        pull.mesh.scale.setScalar(1 + eased * 1.6)
+        pull.mesh.rotation.y += dt * 1.1
+        pull.mesh.scale.setScalar(1 + eased * 1.45)
         if (progress >= 1 && !pull.opened) {
           pull.opened = true
           const { bookId, page } = pull
@@ -1209,7 +1733,7 @@ export function RoomView({ library }: Props) {
           navigateTimer = setTimeout(() => {
             openBook(bookId, page)
             navigate('reader')
-          }, 90)
+          }, 80)
         }
       }
 
@@ -1217,7 +1741,7 @@ export function RoomView({ library }: Props) {
         const progress = Math.min(1, (now - arrive.start) / arrive.duration)
         const eased = progress * progress * (3 - 2 * progress)
         arrive.mesh.position.lerpVectors(arrive.from, arrive.to, eased)
-        arrive.mesh.scale.setScalar(2.6 - eased * 1.6)
+        arrive.mesh.scale.setScalar(2.4 - eased * 1.4)
         if (progress >= 1) {
           scene.remove(arrive.mesh)
           arrive.mesh.geometry.dispose()
@@ -1227,65 +1751,132 @@ export function RoomView({ library }: Props) {
         }
       }
 
-      if (built.dust) {
-        built.dust.rotation.y += 0.00045
-        built.dust.position.y = Math.sin(now / 5200) * 0.06
+      // 6. Living Grand Hall ambient animations: globe, gramophone, fireplace flicker, storm rain & lightning
+      if (built.globeSphere && !reducedMotion) {
+        globeSpinBoost = THREE.MathUtils.damp(globeSpinBoost, 0, 2.5, dt)
+        built.globeSphere.rotation.y += dt * (0.14 + globeSpinBoost)
+      }
+      if (built.platter && usePlayerStore.getState().playing) {
+        built.platter.rotation.y -= dt * 2.2
+      }
+      if (built.dust && !reducedMotion) {
+        built.dust.rotation.y += dt * 0.02
+        built.dust.position.y = Math.sin(now / 5000) * 0.06
+      }
+
+      // Cozy animated fireplace hearth glow
+      if (built.hearthLight && built.hearthFlame) {
+        const amb = useAmbientStore.getState()
+        const fireBoost = amb.enabled && amb.fire > 0.05 ? 1 + amb.fire * 0.45 : 1
+        const flicker = reducedMotion
+          ? 1
+          : 0.88 + Math.sin(now * 0.011) * 0.09 + Math.sin(now * 0.027) * 0.06
+        built.hearthLight.intensity = moodRig.fireplaceIntensity * fireBoost * flicker
+        built.hearthFlame.scale.set(
+          0.92 + (flicker - 0.88) * 0.8,
+          0.85 + (flicker - 0.85) * 1.4,
+          0.92 + (flicker - 0.88) * 0.8
+        )
+      }
+
+      // Stormy Night animated rain streaks & subtle distant lightning shimmer
+      if (built.rainLines && !reducedMotion) {
+        const attr = built.rainLines.geometry.getAttribute('position') as THREE.BufferAttribute
+        const fall = dt * 3.8
+        for (let i = 0; i < attr.count; i += 2) {
+          let y0 = attr.getY(i) - fall
+          let y1 = attr.getY(i + 1) - fall
+          if (y0 < 4.15) {
+            const lift = 2.35
+            y0 += lift
+            y1 += lift
+          }
+          attr.setY(i, y0)
+          attr.setY(i + 1, y1)
+        }
+        attr.needsUpdate = true
+      }
+
+      if (moodRig.hasLightning && !reducedMotion) {
+        if (now >= nextLightningAt) {
+          lightningFlash = 1
+          nextLightningAt = now + 9000 + Math.random() * 14000
+        }
+        if (lightningFlash > 0.01) {
+          lightningFlash = Math.max(0, lightningFlash - dt * 4.5)
+          duskFill.intensity = moodRig.fillIntensity + lightningFlash * 2.2
+          for (const h of built.windowHalos) {
+            ;(h.material as THREE.SpriteMaterial).opacity =
+              moodRig.windowHaloOpacity + lightningFlash * 0.35
+          }
+        } else {
+          duskFill.intensity = moodRig.fillIntensity
+        }
       }
 
       renderer.render(scene, camera)
 
       frames += 1
-      if (now - since >= 500) {
+      if (now - statsSince >= 600) {
         const snapshot: RoomStats = {
-          fps: Math.round((frames * 1000) / Math.max(1, now - since)),
-          frameMs: Math.round(frameMs * 10) / 10,
+          fps: Math.round((frames * 1000) / Math.max(1, now - statsSince)),
+          frameMs: Math.round(avgFrameMs * 10) / 10,
           drawCalls: renderer.info.render.calls,
           triangles: renderer.info.render.triangles,
           books: built.placements.length,
           bookBatches: built.bookMesh ? 1 : 0
         }
-        if (import.meta.env.DEV) setStats(snapshot)
         ;(window as unknown as { __alexandriaRoomStats?: () => RoomStats }).__alexandriaRoomStats =
           () => snapshot
         frames = 0
-        since = now
+        statsSince = now
       }
+
+      scheduleNext()
     }
 
     placeArrivingBook()
-    animate(performance.now())
+    tick()
 
     return () => {
-      cancelAnimationFrame(frame)
+      disposed = true
+      cancelAnimationFrame(frameId)
+      clearTimeout(frameId)
       observer.disconnect()
       if (navigateTimer) clearTimeout(navigateTimer)
-      renderer.domElement.removeEventListener('pointermove', onPointerMove)
-      renderer.domElement.removeEventListener('click', onClick)
+      if (document.pointerLockElement === renderer.domElement) {
+        document.exitPointerLock()
+      }
+      renderer.domElement.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+      renderer.domElement.removeEventListener('wheel', onWheel)
+      renderer.domElement.removeEventListener('contextmenu', onContextMenu)
+      renderer.domElement.removeEventListener('webglcontextlost', onContextLost)
+      renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored)
+      document.removeEventListener('pointerlockchange', onPointerLockChange)
       window.removeEventListener('keydown', onKeyDown)
-      controls.dispose()
-      const shared = new Set<THREE.Material>([
-        wood,
-        woodDark,
-        wallMaterial,
-        floorMaterial,
-        brassMaterial
-      ])
-      scene.traverse((object) => {
-        if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
-          object.geometry.dispose()
-        }
-        const material = (object as { material?: THREE.Material | THREE.Material[] }).material
-        if (!material) return
-        const materials = Array.isArray(material) ? material : [material]
-        for (const entry of materials) {
-          if (!shared.has(entry)) entry.dispose()
-        }
-      })
-      built.texture.dispose()
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onWindowBlur)
+
+      hoverBoxGeo.dispose()
+      hoverBoxMat.dispose()
+      floorCursorGeo.dispose()
+      floorCursorMat.dispose()
+      walkRingGeo.dispose()
+      walkRingMat.dispose()
+      if (built.bookMesh) {
+        built.bookMesh.geometry.dispose()
+        ;(built.bookMesh.material as THREE.Material).dispose()
+      }
+      built.disposables.geometries.forEach((g) => g.dispose())
+      built.disposables.materials.forEach((m) => m.dispose())
+      built.disposables.textures.forEach((t) => t.dispose())
+      envTarget.dispose()
       renderer.dispose()
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
       setHovered(null)
-      setStats(null)
+      setFpsActive(false)
     }
   }, [
     room,
@@ -1295,7 +1886,10 @@ export function RoomView({ library }: Props) {
     clearReturningBook,
     returningBookId,
     reducedMotion,
-    quality
+    quality,
+    theme,
+    mood,
+    setSettingsOpen
   ])
 
   const scanMissing = async (): Promise<void> => {
@@ -1308,108 +1902,428 @@ export function RoomView({ library }: Props) {
     }
   }
 
+  const handleChangeTheme = (next: HallTheme): void => {
+    void setSettingValue('hall.theme', next)
+  }
+
+  const handleChangeMood = (next: HallMood): void => {
+    void setSettingValue('hall.mood', next)
+  }
+
+  const handleCreateWing = async (): Promise<void> => {
+    if (!room) return
+    const cleaned = newWingName.trim()
+    if (!cleaned) return
+    setCreatingWing(true)
+    try {
+      const sectionId = await window.alexandria.createContainer({
+        kind: 'section',
+        parentId: room.id,
+        name: cleaned,
+        wall: newWingWall
+      })
+      await refresh()
+      const freshLayout = useLibraryStore.getState().layout
+      const createdSection = freshLayout
+        .flatMap((f) => f.rooms)
+        .flatMap((r) => r.sections)
+        .find((s) => s.id === sectionId)
+      const firstShelfId = createdSection?.bays[0]?.shelves[0]?.id
+      if (firstShelfId) {
+        await window.alexandria.updateContainer({
+          kind: 'shelf',
+          id: firstShelfId,
+          label: `${cleaned} I`
+        })
+        await refresh()
+        playSound('tick')
+        setNewWingName('')
+        setNewWingOpen(false)
+        setPlacesOpen(false)
+        window.setTimeout(() => {
+          jumpToAnchorRef.current?.(`shelf-${firstShelfId}`)
+        }, 120)
+      }
+    } finally {
+      setCreatingWing(false)
+    }
+  }
+
+  const totalBooks = library?.books ?? books.length
+  const shelfAnchors = anchorList.filter((a) => a.kind === 'shelf')
+  const landmarkAnchors = anchorList.filter((a) => a.kind !== 'shelf')
+
+  const studyTarget = modeDurationSeconds(studyModeType)
+  const studyDisplay =
+    studyTarget > 0 ? formatClock(Math.max(0, studyTarget - studyElapsed)) : formatClock(studyElapsed)
+
   return (
     <div className="room room--scene">
       <div className="room__canvas" ref={mountRef} />
+
+      {contextLost ? (
+        <div className="room__fallback">
+          <p className="room__fallback-title">3D viewport paused</p>
+          <p className="room__fallback-body">
+            Your browser reset WebGL. You can keep reading from the Index or reload the room.
+          </p>
+          <button className="button" type="button" onClick={() => navigate('index')}>
+            Open Index
+          </button>
+        </div>
+      ) : null}
+
       <div
         key={room?.id ?? 'room'}
         className={reducedMotion ? 'room__fade' : 'room__fade room__fade--animate'}
         aria-hidden="true"
       />
 
-      <div className="room__hud">
-        <p className="eyebrow">
-          {room ? `${floors.find((floor) => floor.id === room.floorId)?.name ?? 'Floor'} · ${room.name}` : 'The reading room'}
-        </p>
-        <h2 className="room__hud-title">{room?.name ?? 'Main Hall'}</h2>
-        <p className="room__hud-sub">
-          {roomBooks.length} {roomBooks.length === 1 ? 'volume' : 'volumes'} on this floor&apos;s
-          shelves
-        </p>
+      {/* Minimal unobtrusive top-left title & optional multi-room selector */}
+      <div className="room-brand">
+        <div className="room-brand__line">
+          <span className="room-brand__title">{room?.name ?? 'Main Hall'}</span>
+          <span className="room-brand__sep" aria-hidden="true">
+            ·
+          </span>
+          <span className="room-brand__meta">
+            {totalBooks} {totalBooks === 1 ? 'book' : 'books'}
+          </span>
+        </div>
 
-        <div className="room__picker">
-          {floors.map((floor: Floor) =>
-            floor.rooms.map((entry) => (
+        {allRooms.length > 1 ? (
+          <nav className="room-brand__rooms" aria-label="Rooms">
+            {allRooms.map(({ floor, room: entry }) => (
               <button
                 key={entry.id}
                 type="button"
-                className="chip"
+                className="room-brand__room-btn"
                 aria-current={room?.id === entry.id ? 'true' : undefined}
                 onClick={() => setRoom({ floorId: floor.id, roomId: entry.id })}
               >
-                {floor.name === 'Ground Floor' ? entry.name : `${floor.name} · ${entry.name}`}
+                {floor.name === 'Ground Floor' ? entry.name : `${floor.name} / ${entry.name}`}
               </button>
-            ))
-          )}
-        </div>
+            ))}
+          </nav>
+        ) : null}
 
-        <div className="room__hud-actions">
-          <button className="button" type="button" onClick={() => void pickImportFiles()}>
-            Import
-          </button>
-          <button className="button button--quiet" type="button" onClick={() => navigate('index')}>
-            Browse index
-          </button>
-          <button className="button button--quiet" type="button" onClick={() => navigate('map')}>
-            Map
-          </button>
-          <button className="button button--quiet" type="button" onClick={() => setDeskOpen(true)}>
-            Desk & inbox
-          </button>
-          {import.meta.env.DEV ? (
-            <button
-              className="button button--quiet"
-              type="button"
-              onClick={() => setShowStats((current) => !current)}
-              aria-pressed={showStats}
-            >
-              Stats
-            </button>
-          ) : null}
-        </div>
-
-        <dl className="room__hud-stats">
-          <div>
-            <dt>Volumes</dt>
-            <dd>{library?.books ?? '—'}</dd>
-          </div>
-          <div>
-            <dt>Inbox</dt>
-            <dd>{books.filter((book) => book.shelfId === null).length}</dd>
-          </div>
-          <div>
-            <dt>Missing</dt>
-            <dd>{books.filter((book) => book.missing).length}</dd>
-          </div>
-        </dl>
-
-        {books.some((book) => book.missing) ? (
-          <button className="room__alert" type="button" onClick={() => void scanMissing()} disabled={scanning}>
-            {scanning ? 'Checking linked files…' : 'Some volumes are missing. Check the shelves.'}
+        {missingCount > 0 ? (
+          <button
+            className="room-brand__alert"
+            type="button"
+            onClick={() => void scanMissing()}
+            disabled={scanning}
+          >
+            {scanning ? 'Checking files…' : `${missingCount} missing — check files`}
           </button>
         ) : null}
       </div>
 
-      <p className="room__hint">
-        Drag to look · click a book to read · ← → to walk the shelves · Esc to close
-      </p>
+      {/* Live Corner Architectural Mini-Map HUD */}
+      <MiniMapHud
+        markers={miniMapMarkers}
+        poseRef={miniMapPoseRef}
+        onJump={(anchorId) => jumpToAnchorRef.current?.(anchorId)}
+        visible={miniMapOpen}
+        onToggleVisible={() => setMiniMapOpen((open) => !open)}
+      />
 
-      {hovered ? <div className="room__tooltip">{hovered}</div> : null}
+      {/* Subtle FPS center reticle */}
+      {fpsActive ? (
+        <div
+          className={`room__reticle ${hovered ? 'room__reticle--active' : ''}`}
+          aria-hidden="true"
+        />
+      ) : null}
 
-      {showStats && stats ? (
-        <div className="room__stats" role="status">
-          <span>{stats.fps} fps</span>
-          <span>{stats.frameMs} ms</span>
-          <span>{stats.drawCalls} draws</span>
-          <span>{stats.triangles.toLocaleString()} tris</span>
+      {/* Diegetic interaction prompt on hover / aim */}
+      {hovered ? (
+        <div className="room__inspect" role="status">
+          <span className="room__inspect-title">{hovered.label}</span>
+          <span className="room__inspect-hint">{hovered.hint}</span>
         </div>
       ) : null}
 
+      {/* Unified Collapsible Bottom Game Dock with Places & Atmosphere Popovers */}
+      <div className={`game-dock-wrap ${dockOpen ? '' : 'game-dock-wrap--collapsed'}`}>
+        {atmosphereOpen && dockOpen ? (
+          <AtmospherePopover
+            theme={theme}
+            mood={mood}
+            onChangeTheme={handleChangeTheme}
+            onChangeMood={handleChangeMood}
+            onClose={() => setAtmosphereOpen(false)}
+          />
+        ) : null}
+
+        {placesOpen && dockOpen ? (
+          <div className="places-popover" role="dialog" aria-label="Shelves, wings and hall landmarks">
+            <div className="places-popover__head">
+              <span>Shelves, Wings &amp; Landmarks</span>
+              <div className="places-popover__head-actions">
+                <button
+                  type="button"
+                  className="places-popover__add-btn"
+                  onClick={() => setNewWingOpen((prev) => !prev)}
+                >
+                  {newWingOpen ? 'Close' : '+ New Wing'}
+                </button>
+                <button
+                  type="button"
+                  className="places-popover__close"
+                  onClick={() => setPlacesOpen(false)}
+                  aria-label="Close places menu"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            {newWingOpen ? (
+              <form
+                className="wing-builder"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  void handleCreateWing()
+                }}
+              >
+                <input
+                  type="text"
+                  value={newWingName}
+                  maxLength={40}
+                  placeholder="Wing name (e.g. Philosophy, Sci-Fi)"
+                  onChange={(e) => setNewWingName(e.target.value)}
+                  autoFocus
+                />
+                <div className="wing-builder__row">
+                  <select
+                    value={newWingWall}
+                    aria-label="Choose wall"
+                    onChange={(e) => setNewWingWall(e.target.value as Wall)}
+                  >
+                    <option value="north">North Wall</option>
+                    <option value="east">East Wall</option>
+                    <option value="west">West Wall</option>
+                    <option value="south">South Balcony</option>
+                  </select>
+                  <button
+                    type="submit"
+                    className="button wing-builder__submit"
+                    disabled={creatingWing || !newWingName.trim()}
+                  >
+                    {creatingWing ? 'Building…' : 'Build Wing'}
+                  </button>
+                </div>
+              </form>
+            ) : null}
+
+            {shelfAnchors.length > 0 ? (
+              <div className="places-popover__group">
+                <p className="places-popover__label">Named Shelves</p>
+                <div className="places-popover__list">
+                  {shelfAnchors.map((anchor) => (
+                    <div key={anchor.id} className="places-popover__row">
+                      <button
+                        type="button"
+                        className="places-popover__go"
+                        onClick={() => {
+                          jumpToAnchorRef.current?.(anchor.id)
+                          setPlacesOpen(false)
+                        }}
+                      >
+                        <span className="places-popover__name">{anchor.label}</span>
+                        {anchor.meta ? (
+                          <span className="places-popover__meta">{anchor.meta}</span>
+                        ) : null}
+                      </button>
+                      {anchor.shelfId !== undefined ? (
+                        <button
+                          type="button"
+                          className="places-popover__edit"
+                          title={`Rename ${anchor.label}`}
+                          onClick={() => {
+                            jumpToAnchorRef.current?.(anchor.id)
+                            setRenameFocus(true)
+                            openShelf(anchor.shelfId ?? null)
+                            setPlacesOpen(false)
+                          }}
+                        >
+                          Edit
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="places-popover__group">
+              <p className="places-popover__label">Hall Landmarks</p>
+              <div className="places-popover__landmarks">
+                {landmarkAnchors.map((anchor) => (
+                  <button
+                    key={anchor.id}
+                    type="button"
+                    className="places-popover__landmark"
+                    onClick={() => {
+                      jumpToAnchorRef.current?.(anchor.id)
+                      setPlacesOpen(false)
+                    }}
+                  >
+                    {anchor.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <button
+          type="button"
+          className="game-dock__toggle"
+          onClick={() => {
+            setDockOpen((open) => !open)
+            setPlacesOpen(false)
+            setAtmosphereOpen(false)
+          }}
+          aria-expanded={dockOpen}
+          title={dockOpen ? 'Hide controls (H)' : 'Show controls (H)'}
+        >
+          {dockOpen ? '▾ Hide' : '▴ Controls'}
+        </button>
+
+        <div className="game-dock" role="toolbar" aria-label="Library controls">
+          <button
+            type="button"
+            className="game-dock__btn game-dock__btn--primary"
+            onClick={() => void pickImportFiles()}
+          >
+            Import
+          </button>
+
+          <button
+            type="button"
+            className={`game-dock__btn ${placesOpen ? 'game-dock__btn--active' : ''}`}
+            onClick={() => {
+              setAtmosphereOpen(false)
+              setPlacesOpen((open) => !open)
+            }}
+            title="Jump to shelves, build wings, or visit Upper Balcony (P)"
+          >
+            Shelves &amp; Wings
+          </button>
+
+          <button
+            type="button"
+            className={`game-dock__btn ${atmosphereOpen || ambientEnabled ? 'game-dock__btn--active' : ''}`}
+            onClick={() => {
+              setPlacesOpen(false)
+              setAtmosphereOpen((open) => !open)
+            }}
+            title="Switch Hall Theme, Time & Weather Mood, and Ambient Sound (T)"
+          >
+            Atmosphere
+          </button>
+
+          <button
+            type="button"
+            className={`game-dock__btn ${studyRunning ? 'game-dock__btn--active' : ''}`}
+            onClick={() => setDeskOpen(true)}
+            title="Reading Desk, Inbox & Study Tracker"
+          >
+            {studyRunning ? `Desk · ${studyDisplay}` : `Desk${inboxCount > 0 ? ` (${inboxCount})` : ''}`}
+          </button>
+
+          <button type="button" className="game-dock__btn" onClick={() => setSearchOpen(true)}>
+            Search
+          </button>
+
+          <span className="game-dock__divider" aria-hidden="true" />
+
+          <button type="button" className="game-dock__btn" onClick={() => navigate('map')}>
+            Map
+          </button>
+
+          <button type="button" className="game-dock__btn" onClick={() => navigate('index')}>
+            Index
+          </button>
+
+          <button type="button" className="game-dock__btn" onClick={() => navigate('librarian')}>
+            Manage
+          </button>
+
+          <span className="game-dock__divider" aria-hidden="true" />
+
+          <button
+            type="button"
+            className={`game-dock__btn ${fpsActive ? 'game-dock__btn--active' : ''}`}
+            onClick={() => fpsToggleRef.current?.()}
+            title="Toggle first-person walk mode (Tab)"
+          >
+            {fpsActive ? 'Exit Walk' : 'Walk'}
+          </button>
+
+          <button
+            type="button"
+            className="game-dock__btn"
+            onClick={() => resetViewRef.current?.()}
+            title="Return to Grand Hall entrance (R)"
+          >
+            Entrance
+          </button>
+
+          <button
+            type="button"
+            className="game-dock__btn"
+            onClick={() => setSettingsOpen(true)}
+            title="Settings (Ctrl/Cmd + ,)"
+          >
+            Settings
+          </button>
+
+          <button
+            type="button"
+            className="game-dock__btn"
+            onClick={() => setTipsOpen(true)}
+            title="Controls & shortcuts"
+            aria-label="Controls and shortcuts"
+          >
+            ?
+          </button>
+        </div>
+
+        <p className="game-dock__keys" aria-hidden="true">
+          WASD walk (climb stairs to balcony) · Right-click book to preview · P shelves · T
+          atmosphere · N mini-map · Tab first-person
+        </p>
+      </div>
+
       {openShelfId !== null ? (
-        <ShelfDrawer shelfId={openShelfId} onClose={() => openShelf(null)} />
+        <ShelfDrawer
+          shelfId={openShelfId}
+          autoFocusRename={renameFocus}
+          onInspectBook={(book) => setPreviewBook(book)}
+          onSelectShelf={(nextId) => {
+            openShelf(nextId)
+            jumpToAnchorRef.current?.(`shelf-${nextId}`)
+          }}
+          onClose={() => {
+            openShelf(null)
+            setRenameFocus(false)
+          }}
+        />
       ) : null}
 
-      {deskOpen ? <DeskDrawer onClose={() => setDeskOpen(false)} /> : null}
+      {deskOpen ? (
+        <DeskDrawer
+          onInspectBook={(book) => setPreviewBook(book)}
+          onClose={() => setDeskOpen(false)}
+        />
+      ) : null}
+
+      {previewBook ? (
+        <BookPreviewCard book={previewBook} onClose={() => setPreviewBook(null)} />
+      ) : null}
     </div>
   )
 }

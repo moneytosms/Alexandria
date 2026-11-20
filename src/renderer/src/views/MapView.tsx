@@ -182,12 +182,19 @@ export function MapView({ library }: Props) {
                                 (sum, shelf) => sum + shelf.bookCount,
                                 0
                               )
+                              const named = bay.shelves
+                                .map((shelf) => shelf.label?.trim())
+                                .filter((name): name is string => Boolean(name))
+                              const titleText =
+                                named.length > 0
+                                  ? `Bay ${bay.sortIndex + 1} (${named.join(', ')}) · ${count} volumes`
+                                  : `Bay ${bay.sortIndex + 1} · ${count} volumes`
                               return (
                                 <button
                                   key={bay.id}
                                   type="button"
                                   className="map__bay"
-                                  title={`Bay ${bay.sortIndex + 1} · ${count} volumes`}
+                                  title={titleText}
                                   onClick={() => travel()}
                                 >
                                   {bay.sortIndex + 1}

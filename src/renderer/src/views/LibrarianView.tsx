@@ -28,6 +28,7 @@ export function LibrarianView({ library }: Props) {
   const [tags, setTags] = useState<Array<{ id: number; name: string; count: number }>>([])
   const [newTag, setNewTag] = useState('')
   const [shelfId, setShelfId] = useState<number | null>(null)
+  const [shelfLabel, setShelfLabel] = useState('')
   const [capacity, setCapacity] = useState(24)
   const [musicFolders, setMusicFolders] = useState<string[]>([])
   const [musicScanning, setMusicScanning] = useState(false)
@@ -40,9 +41,10 @@ export function LibrarianView({ library }: Props) {
         for (const section of room.sections) {
           for (const bay of section.bays) {
             for (const shelf of bay.shelves) {
+              const name = shelf.label?.trim() || `Shelf ${shelf.rowIndex + 1}`
               flat.push({
                 shelf,
-                label: `${floor.name} · ${room.name} · ${section.name} · Shelf ${shelf.id}`
+                label: `${floor.name} · ${room.name} · ${section.name} · ${name}`
               })
             }
           }
@@ -56,6 +58,7 @@ export function LibrarianView({ library }: Props) {
 
   useEffect(() => {
     if (selected) {
+      setShelfLabel(selected.label ?? '')
       setCapacity(selected.capacity)
     }
   }, [selected])
@@ -126,16 +129,22 @@ export function LibrarianView({ library }: Props) {
     if (!selected) return
     setBusy(true)
     try {
+      const cleaned = shelfLabel.trim()
       await window.alexandria.updateContainer({
         kind: 'shelf',
         id: selected.id,
+        label: cleaned.length > 0 ? cleaned : null,
         capacity,
         sortMode: selected.sortMode,
         sortDir: selected.sortDir
       })
       await window.alexandria.resortShelf(selected.id)
       await refresh()
-      setMessage(`Shelf ${selected.id} updated.`)
+      setMessage(
+        cleaned.length > 0
+          ? `Shelf "${cleaned}" updated.`
+          : `Shelf ${selected.rowIndex + 1} updated.`
+      )
     } finally {
       setBusy(false)
     }
@@ -361,6 +370,16 @@ export function LibrarianView({ library }: Props) {
 
         {selected ? (
           <div className="panel__settings">
+            <label className="field field--compact">
+              <span>Name</span>
+              <input
+                type="text"
+                maxLength={64}
+                placeholder={`Shelf ${selected.rowIndex + 1}`}
+                value={shelfLabel}
+                onChange={(event) => setShelfLabel(event.target.value)}
+              />
+            </label>
             <label className="field field--compact">
               <span>Capacity</span>
               <input

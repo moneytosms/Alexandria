@@ -161,12 +161,14 @@ export interface ContainerCreateInput {
   kind: ContainerKind
   parentId: number | null
   name?: string
+  wall?: Wall
 }
 
 export interface ContainerUpdateInput {
   kind: ContainerKind
   id: number
   name?: string
+  label?: string | null
   wall?: Wall
   capacity?: number
   sortMode?: SortMode

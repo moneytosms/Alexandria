@@ -20,8 +20,14 @@ import {
   stepMatch
 } from '../reader/layout'
 import { navigate } from '../router'
-import { playSound } from '../sound'
+import { playSound, useAmbientStore } from '../sound'
 import { recallLastBook, useReaderStore } from '../state/reader-store'
+import {
+  formatClock,
+  modeDurationSeconds,
+  useStudyStore,
+  type TimerMode
+} from '../state/study-store'
 import { useUiStore } from '../state/ui-store'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
@@ -496,6 +502,23 @@ export function ReaderView() {
   const setSelectedBook = useUiStore((state) => state.setSelectedBook)
   const returnBook = useUiStore((state) => state.returnBook)
 
+  const studyMode = useStudyStore((s) => s.studyMode)
+  const setStudyMode = useStudyStore((s) => s.setStudyMode)
+  const studyTimerMode = useStudyStore((s) => s.mode)
+  const studyRunning = useStudyStore((s) => s.running)
+  const studyElapsed = useStudyStore((s) => s.elapsedSec)
+  const setTimerMode = useStudyStore((s) => s.setMode)
+  const toggleTimerRunning = useStudyStore((s) => s.toggleRunning)
+  const finishAndLogSession = useStudyStore((s) => s.finishAndLog)
+  const recordPageTurn = useStudyStore((s) => s.recordPageTurn)
+
+  const ambientEnabled = useAmbientStore((s) => s.enabled)
+  const ambientRain = useAmbientStore((s) => s.rain)
+  const ambientFire = useAmbientStore((s) => s.fire)
+  const ambientChimes = useAmbientStore((s) => s.chimes)
+  const setAmbientEnabled = useAmbientStore((s) => s.setEnabled)
+  const setAmbientChannel = useAmbientStore((s) => s.setChannel)
+
   const [book, setBook] = useState<Book | null>(null)
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [page, setPage] = useState(1)
@@ -732,12 +755,20 @@ export function ReaderView() {
 
   const nextPage = useCallback(() => {
     playSound('page')
-    goToPage(page + (isSpread ? 2 : 1))
-  }, [goToPage, page, isSpread])
+    const target = Math.min(pageCount || 1, page + (isSpread ? 2 : 1))
+    if (target !== page) {
+      recordPageTurn(book?.id ?? null, book?.title ?? null)
+    }
+    goToPage(target)
+  }, [goToPage, page, pageCount, isSpread, recordPageTurn, book?.id, book?.title])
   const previousPage = useCallback(() => {
     playSound('page')
-    goToPage(page - (isSpread ? 2 : 1))
-  }, [goToPage, page, isSpread])
+    const target = Math.max(1, page - (isSpread ? 2 : 1))
+    if (target !== page) {
+      recordPageTurn(book?.id ?? null, book?.title ?? null)
+    }
+    goToPage(target)
+  }, [goToPage, page, isSpread, recordPageTurn, book?.id, book?.title])
 
   const onScroll = (): void => {
     if (settings.mode !== 'continuous' || programmaticScroll.current || !scrollRef.current) return
@@ -1024,7 +1055,15 @@ export function ReaderView() {
         case 's':
           setSettings((current) => ({ ...current, mode: 'page', spread: !current.spread }))
           break
+        case 'd':
+          event.preventDefault()
+          setStudyMode(!studyMode)
+          break
         case 'Escape':
+          if (studyMode) {
+            setStudyMode(false)
+            break
+          }
           setSidebar(false)
           setNoteDraft(null)
           setShortcutsOpen(false)
@@ -1130,9 +1169,31 @@ export function ReaderView() {
     (annotation) => annotation.type === 'bookmark' && annotation.page === page
   )
 
+  const studyTargetSec = modeDurationSeconds(studyTimerMode)
+  const studyClockDisplay =
+    studyTargetSec > 0
+      ? formatClock(Math.max(0, studyTargetSec - studyElapsed))
+      : formatClock(studyElapsed)
+  const readPercent = pageCount > 0 ? Math.min(100, Math.round((page / pageCount) * 100)) : 0
+
+  const toggleAmbientSound = (channel: 'rain' | 'fire' | 'chimes', currentVal: number): void => {
+    playSound('tick')
+    if (!ambientEnabled) {
+      setAmbientChannel(channel, currentVal > 0.05 ? currentVal : 0.45)
+      setAmbientEnabled(true)
+    } else if (currentVal > 0.05) {
+      setAmbientChannel(channel, 0)
+    } else {
+      setAmbientChannel(channel, 0.45)
+    }
+  }
+
   return (
-    <div className={`reader reader--${settings.theme} ${sidebarOpen ? 'reader--sidebar' : ''}`}>
-      <header className="reader__bar">
+    <div
+      className={`reader reader--${settings.theme} ${sidebarOpen && !studyMode ? 'reader--sidebar' : ''} ${studyMode ? 'reader--study' : ''}`}
+    >
+      {!studyMode ? (
+        <header className="reader__bar">
         <div className="reader__identity">
           <button
             className="icon-button"
@@ -1366,6 +1427,28 @@ export function ReaderView() {
             ▥
           </button>
           <button
+            className={`reader__timer-btn ${studyRunning ? 'reader__timer-btn--on' : ''}`}
+            type="button"
+            title={studyRunning ? 'Pause study timer' : 'Start study timer'}
+            onClick={() => {
+              playSound('tick')
+              toggleTimerRunning(book ? { id: book.id, title: book.title } : null)
+            }}
+          >
+            {studyRunning ? '❚❚' : '▶'} {studyClockDisplay}
+          </button>
+          <button
+            className="reader__study-btn"
+            type="button"
+            title="Distraction-free Study Mode (D)"
+            onClick={() => {
+              playSound('tick')
+              setStudyMode(!studyMode)
+            }}
+          >
+            Study
+          </button>
+          <button
             className="tool"
             type="button"
             title="Keyboard shortcuts (?)"
@@ -1379,6 +1462,112 @@ export function ReaderView() {
           </button>
         </div>
       </header>
+      ) : null}
+
+      {studyMode ? (
+        <div className="study-pill" role="toolbar" aria-label="Study mode controls">
+          <div className="study-pill__group">
+            {(
+              [
+                ['pomodoro25', '25m'],
+                ['deep50', '50m'],
+                ['stopwatch', 'Free']
+              ] as Array<[TimerMode, string]>
+            ).map(([m, label]) => (
+              <button
+                key={m}
+                type="button"
+                className={`study-pill__btn ${studyTimerMode === m ? 'study-pill__btn--on' : ''}`}
+                onClick={() => setTimerMode(m)}
+              >
+                {label}
+              </button>
+            ))}
+            <span className="study-pill__clock">{studyClockDisplay}</span>
+            <button
+              type="button"
+              className={`study-pill__btn ${studyRunning ? 'study-pill__btn--on' : ''}`}
+              onClick={() => {
+                playSound('tick')
+                toggleTimerRunning(book ? { id: book.id, title: book.title } : null)
+              }}
+            >
+              {studyRunning ? 'Pause' : 'Start'}
+            </button>
+            {studyElapsed >= 15 ? (
+              <button
+                type="button"
+                className="study-pill__btn"
+                onClick={() => void finishAndLogSession()}
+              >
+                Log
+              </button>
+            ) : null}
+          </div>
+
+          <span className="study-pill__sep" aria-hidden="true" />
+
+          <div className="study-pill__group">
+            <button
+              type="button"
+              className="study-pill__btn"
+              onClick={previousPage}
+              disabled={page <= 1}
+              aria-label="Previous page"
+            >
+              ‹
+            </button>
+            <span className="study-pill__page">
+              p. {page} / {pageCount || '—'} · {readPercent}%
+            </span>
+            <button
+              type="button"
+              className="study-pill__btn"
+              onClick={nextPage}
+              disabled={pageCount === 0 || page >= pageCount}
+              aria-label="Next page"
+            >
+              ›
+            </button>
+          </div>
+
+          <span className="study-pill__sep" aria-hidden="true" />
+
+          <div className="study-pill__group">
+            <button
+              type="button"
+              className={`study-pill__btn ${ambientEnabled && ambientRain > 0.05 ? 'study-pill__btn--on' : ''}`}
+              onClick={() => toggleAmbientSound('rain', ambientRain)}
+            >
+              Rain
+            </button>
+            <button
+              type="button"
+              className={`study-pill__btn ${ambientEnabled && ambientFire > 0.05 ? 'study-pill__btn--on' : ''}`}
+              onClick={() => toggleAmbientSound('fire', ambientFire)}
+            >
+              Fire
+            </button>
+            <button
+              type="button"
+              className={`study-pill__btn ${ambientEnabled && ambientChimes > 0.05 ? 'study-pill__btn--on' : ''}`}
+              onClick={() => toggleAmbientSound('chimes', ambientChimes)}
+            >
+              Chimes
+            </button>
+          </div>
+
+          <span className="study-pill__sep" aria-hidden="true" />
+
+          <button
+            type="button"
+            className="study-pill__btn study-pill__exit"
+            onClick={() => setStudyMode(false)}
+          >
+            Exit Study (Esc)
+          </button>
+        </div>
+      ) : null}
 
       <div className="reader__body">
         <div className="reader__viewport" ref={viewportRef}>
@@ -1454,7 +1643,7 @@ export function ReaderView() {
           ) : null}
         </div>
 
-        {sidebarOpen ? (
+        {sidebarOpen && !studyMode ? (
           <aside className="reader__sidebar" style={{ width: settings.sidebarWidth }}>
             <div
               className="reader__resize"
@@ -1805,11 +1994,12 @@ export function ReaderView() {
                 ['I', 'Ink tool'],
                 ['E', 'Eraser'],
                 ['S', 'Two-page spread'],
+                ['D', 'Distraction-free study mode'],
                 ['Ctrl / Cmd + Z', 'Undo ink'],
                 ['Ctrl / Cmd + Shift + Z', 'Redo ink'],
                 ['Ctrl / Cmd + F', 'Search inside'],
                 ['?', 'This list'],
-                ['Esc', 'Close the panel']
+                ['Esc', 'Exit study mode / close panel']
               ].map(([keys, action]) => (
                 <div key={keys}>
                   <dt>
@@ -1825,19 +2015,21 @@ export function ReaderView() {
 
       {loading ? <div className="reader__scrim" aria-hidden="true" /> : null}
 
-      <footer className="reader__status">
-        <span>{settings.mode === 'page' ? 'Single page' : 'Continuous'}</span>
-        <span>
-          {tool === 'select'
-            ? 'Select text'
-            : tool === 'highlight'
-              ? 'Highlight tool'
-              : tool === 'ink'
-                ? 'Ink tool'
-                : 'Eraser'}
-        </span>
-        <span>{book?.pageCount ?? pageCount} pages</span>
-      </footer>
+      {!studyMode ? (
+        <footer className="reader__status">
+          <span>{settings.mode === 'page' ? 'Single page' : 'Continuous'}</span>
+          <span>
+            {tool === 'select'
+              ? 'Select text'
+              : tool === 'highlight'
+                ? 'Highlight tool'
+                : tool === 'ink'
+                  ? 'Ink tool'
+                  : 'Eraser'}
+          </span>
+          <span>{book?.pageCount ?? pageCount} pages</span>
+        </footer>
+      ) : null}
     </div>
   )
 }

@@ -240,7 +240,7 @@ export function createContainer(db: DatabaseSync, input: ContainerCreateInput): 
             wall: Wall
           }>
         ).map((row) => row.wall)
-        const wall = walls.find((candidate) => !used.includes(candidate)) ?? 'north'
+        const wall = input.wall ?? walls.find((candidate) => !used.includes(candidate)) ?? 'north'
         return createSectionInRoom(db, input.parentId, wall, input.name)
       }
       case 'bay': {
@@ -249,13 +249,21 @@ export function createContainer(db: DatabaseSync, input: ContainerCreateInput): 
       }
       case 'shelf': {
         if (input.parentId == null) throw new Error('A shelf needs a bay')
-        const rowIndex = nextSortIndex(db, 'shelves', 'bay_id', input.parentId)
+        const rowIndex = Number(
+          (
+            db
+              .prepare('SELECT COALESCE(MAX(row_index), -1) + 1 AS next FROM shelves WHERE bay_id = ?')
+              .get(input.parentId) as { next: number }
+          ).next
+        )
+        const trimmed = input.name?.trim()
+        const label = trimmed && trimmed.length > 0 ? trimmed.slice(0, 64) : null
         const result = db
           .prepare(
-            `INSERT INTO shelves (bay_id, row_index, capacity, sort_mode, sort_dir)
-             VALUES (?, ?, 24, 'manual', 'asc')`
+            `INSERT INTO shelves (bay_id, label, row_index, capacity, sort_mode, sort_dir)
+             VALUES (?, ?, ?, 24, 'manual', 'asc')`
           )
-          .run(input.parentId, rowIndex)
+          .run(input.parentId, label, rowIndex)
         return Number(result.lastInsertRowid)
       }
     }
@@ -286,6 +294,12 @@ export function updateContainer(db: DatabaseSync, input: ContainerUpdateInput): 
     case 'bay':
       return
     case 'shelf': {
+      const rawLabel = input.label !== undefined ? input.label : input.name
+      if (rawLabel !== undefined) {
+        const trimmed = rawLabel === null ? '' : rawLabel.trim()
+        const normalized = trimmed.length > 0 ? trimmed.slice(0, 64) : null
+        db.prepare('UPDATE shelves SET label = ? WHERE id = ?').run(normalized, input.id)
+      }
       if (input.capacity !== undefined) {
         const capacity = Math.max(1, Math.min(200, Math.round(input.capacity)))
         db.prepare('UPDATE shelves SET capacity = ? WHERE id = ?').run(capacity, input.id)

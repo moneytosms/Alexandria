@@ -1,3 +1,4 @@
+import './web-bridge'
 import '@fontsource/almendra/400.css'
 import '@fontsource/almendra/400-italic.css'
 import '@fontsource/almendra/700.css'
