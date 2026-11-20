@@ -4,7 +4,7 @@ Last updated: 2026-11-20
 Spec: `./SPEC.md`
 Handoff: `./NEXT_STEPS.md`
 
-Status: planning complete, implementation not started.
+Status: M0 complete, M1 starting.
 
 ## How to work
 
@@ -21,7 +21,7 @@ Status: `[ ]` todo, `[~]` in progress, `[x]` done, `[!]` blocked.
 
 ## Current focus
 
-`M0-05 Database`
+`M1-01 Import entry points`
 
 ## Planning
 
@@ -39,11 +39,11 @@ Nothing ships until this is solid. Keep it boring.
 - [x] **M0-02 Toolchain.** ESLint, Prettier, Vitest, Playwright, path aliases, `pnpm lint`, `pnpm typecheck`, `pnpm test`. Done when all three pass on the empty project.
 - [x] **M0-03 Secure app shell.** Main, preload, renderer. `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`, strict CSP, no remote content. Done when the renderer has no Node globals and the app still runs.
 - [x] **M0-04 Typed IPC.** Shared contract in `src/shared/ipc.ts`, validated handlers, `contextBridge` API. Done when one round-trip call works and is typed end to end.
-- [ ] **M0-05 Database.** node:sqlite, WAL, foreign keys, `user_version` migrations, repository helpers. Done when a fresh DB migrates to v1 and reopens cleanly.
-- [ ] **M0-06 Library folder.** First-run folder picker, default `~/Alexandria`, `config.json`, settings table, path resolution. Done when the app creates the folder tree and remembers it.
-- [ ] **M0-07 Logging and errors.** Rotating local log, main-process error boundary, renderer error boundary. Done when a thrown test error is logged and the UI stays alive.
-- [ ] **M0-08 CI.** GitHub Actions: install, lint, typecheck, test, Linux build. Done when CI is green on the scaffold.
-- [ ] **M0-09 UI shell.** View router (room, reader, map, librarian, index), theme tokens, bundled fonts, base components. Done when all five empty views navigate.
+- [x] **M0-05 Database.** node:sqlite, WAL, foreign keys, `user_version` migrations, repository helpers. Done when a fresh DB migrates to v1 and reopens cleanly.
+- [x] **M0-06 Library folder.** First-run folder picker, default `~/Alexandria`, `config.json`, settings table, path resolution. Done when the app creates the folder tree and remembers it.
+- [x] **M0-07 Logging and errors.** Rotating local log, main-process error boundary, renderer error boundary. Done when a thrown test error is logged and the UI stays alive.
+- [x] **M0-08 CI.** GitHub Actions: install, lint, typecheck, test, Linux build. Done when CI is green on the scaffold.
+- [x] **M0-09 UI shell.** View router (room, reader, map, librarian, index), theme tokens, bundled fonts, base components. Done when all five empty views navigate.
 - [x] **M0-10 Test harness.** Unit test setup, Electron E2E smoke test. Done when `pnpm test` and `pnpm test:e2e` both run.
 
 ## M1 Import and index
@@ -141,6 +141,7 @@ Nothing ships until this is solid. Keep it boring.
 
 Newest first. One line per task: date, task, note.
 
+- 2026-11-20 M0-05 to M0-09: schema and book queries, first-run location, rotating log and error boundaries, CI, five-view shell with bundled fonts. CI workflow is local-verified; remote run awaits first push.
 - 2026-11-20 M0-01 to M0-04, M0-10: scaffold, toolchain, secure shell, typed IPC, test harness.
 - 2026-11-20 P-01 to P-05: spec, review, defaults, TODO, handoff.
 

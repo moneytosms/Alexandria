@@ -11,24 +11,20 @@ The full design is in `SPEC.md`. The task list is in `TODO.md`.
 
 ## Current state
 
-- Design complete and reviewed by a fresh builder. All eight review gaps are resolved.
-- No code written yet. The project folder `/home/sms/Projects/Alexandria` is empty and is not a git repository.
-- `SPEC.md`, `TODO.md`, and this file are in `/home/sms/.opencode/plan` because the planning session could not write to the project.
+- M0 is complete. The app builds, launches, creates a library folder, and shows a five-view shell.
+- Git repository initialized at `/home/sms/Projects/Alexandria`. Commits: scaffold, database, and the in-progress M0 completion commit.
+- Working: electron-vite, React, strict TypeScript, secure preload, typed IPC, node:sqlite with FTS5, migrations, first-run library location, settings, rotating logs, error boundaries, five-view hash router, bundled Cormorant Garamond and Inter, Vitest, Playwright, electron-builder, CI workflow.
+- Tests: `pnpm test` has 5 files and 18 passing tests. `pnpm test:e2e` has 3 passing Electron tests. `pnpm build` and `pnpm exec electron-builder --linux dir` pass locally.
+- CI workflow exists at `.github/workflows/ci.yml` but has not run remotely because the repo has no remote yet.
+- Not started: import, PDF, reader, 3D room, map projection, librarian actions, music.
 - Defaults settled: imports copy into the library by default, layout growth is append-only, Linux is the v1 install target, assets are procedural or CC0.
 
 ## First 10 minutes
 
-1. Copy the three docs into the repo:
-
-```sh
-mkdir -p /home/sms/Projects/Alexandria
-cp /home/sms/.opencode/plan/SPEC.md /home/sms/Projects/Alexandria/
-cp /home/sms/.opencode/plan/TODO.md /home/sms/Projects/Alexandria/
-cp /home/sms/.opencode/plan/NEXT_STEPS.md /home/sms/Projects/Alexandria/
-```
-
+1. Run `pnpm install`, `pnpm test`, and `pnpm build` to confirm the environment.
 2. Read `SPEC.md` sections 6, 9, and 10. Those define the experience, the architecture, and the room.
-3. Start `M0-01` in `TODO.md`.
+3. Open `TODO.md` and start `M1-01 Import entry points`.
+4. Keep `pdfjs-dist` work out of the main process. Plan the PDF worker or utility process before M1-04.
 
 ## How to resume
 
@@ -54,17 +50,20 @@ M2 (reader and annotations) and M3 (library model) can run in parallel after M1.
 - SQLite through node:sqlite, WAL, foreign keys, `user_version` migrations. No native database module.
 - Layout tables are authoritative. The 3D room is projected from them. Growth only appends.
 - The library is a folder: `library.db`, `config.json`, `books/`, `covers/`, `thumbs/`, `cache/`, `logs/`.
+- The library location lives outside the library in Electron `userData/app-config.json`. `ALEXANDRIA_LIBRARY_PATH` overrides it for tests and portable runs.
+- Main logs rotate at 2MB to `logs/main.log.1`. Renderer errors cross IPC into the same log.
+- The renderer uses a hash router (`#/room`, `#/reader`, `#/map`, `#/librarian`, `#/index`). No routing dependency.
 
-## Commands to create (M0)
+## Commands
 
 ```sh
 pnpm install
 pnpm dev          # Electron app with HMR
-pnpm build        # production build
+pnpm build        # typecheck and production build
 pnpm typecheck
 pnpm lint
 pnpm test         # Vitest
-pnpm test:e2e     # Playwright Electron
+pnpm test:e2e     # build, then Playwright Electron
 pnpm dist:linux   # AppImage + deb
 ```
 
@@ -77,6 +76,7 @@ Node 26, pnpm 12, LibreOffice, and ffmpeg are installed on this machine.
 - PDFs are immutable. Annotations live in SQLite, normalized to page coordinates.
 - SQLite plus FTS5 is the library format. No cloud, no accounts, no telemetry.
 - Imports copy by default. Linking is an option.
+- First run asks for a library location and defaults to `~/Alexandria`.
 - Layout is append-only. Existing books never reflow because the collection grew.
 - A shelf is one row, a bay is five rows, a section is a run of bays.
 - The reader pauses the 3D loop.

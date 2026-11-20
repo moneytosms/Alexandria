@@ -816,6 +816,7 @@ Everything here is deliberately out of v1. The data model and architecture shoul
 - PDF.js as the only PDF engine in v1.
 - SQLite plus FTS5 as the library format. The folder is portable.
 - Database access uses node:sqlite, not better-sqlite3. It is built into Electron's Node, supports FTS5, and removes native rebuilds.
+- First run asks where the library should live and defaults to `~/Alexandria`. The choice is remembered outside the library folder.
 - Local-first, no accounts, no network.
 - Curated library, not a downloads mirror.
 - 3D with glide navigation, no free-walk.

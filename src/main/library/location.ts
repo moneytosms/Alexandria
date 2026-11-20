@@ -11,21 +11,34 @@ function configPath(): string {
   return join(app.getPath('userData'), 'app-config.json')
 }
 
-export function resolveLibraryRoot(): string {
-  const override = process.env['ALEXANDRIA_LIBRARY_PATH']
-  if (override) return override
-
+function readConfig(): AppConfig | null {
   try {
     const raw = readFileSync(configPath(), 'utf8')
     const parsed = JSON.parse(raw) as Partial<AppConfig>
     if (typeof parsed.libraryPath === 'string' && parsed.libraryPath.length > 0) {
-      return parsed.libraryPath
+      return { libraryPath: parsed.libraryPath }
     }
   } catch {
-    // First run, or an unreadable config. Fall through to the default.
+    // Missing or unreadable config. Caller falls back to the default.
   }
 
+  return null
+}
+
+export function defaultLibraryRoot(): string {
   return join(homedir(), 'Alexandria')
+}
+
+export function hasStoredLibraryRoot(): boolean {
+  if (process.env['ALEXANDRIA_LIBRARY_PATH']) return true
+  return readConfig() !== null
+}
+
+export function resolveLibraryRoot(): string {
+  const override = process.env['ALEXANDRIA_LIBRARY_PATH']
+  if (override) return override
+
+  return readConfig()?.libraryPath ?? defaultLibraryRoot()
 }
 
 export function rememberLibraryRoot(root: string): void {

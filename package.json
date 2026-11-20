@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "description": "A local-first 3D library for your PDFs",
   "main": "./out/main/index.js",
-  "author": "sms",
+  "author": {
+    "name": "Srimoneyshankar Ajith",
+    "email": "moneytosms@gmail.com"
+  },
   "license": "MIT",
   "private": true,
   "engines": {
@@ -22,6 +25,8 @@
     "dist:linux": "pnpm build && electron-builder --linux"
   },
   "dependencies": {
+    "@fontsource/cormorant-garamond": "5.3.0",
+    "@fontsource/inter": "5.3.0",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },

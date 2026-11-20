@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { openDatabase } from './index'
 import { currentSchemaVersion } from './migrations'
@@ -41,6 +44,36 @@ describe('database', () => {
 
     expect(second.user_version).toBe(first.user_version)
     reopened.close()
+  })
+
+  it('reopens a file database without rerunning migrations', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'alexandria-db-'))
+    const path = join(dir, 'library.db')
+
+    try {
+      const db = openDatabase(path)
+      seedHierarchy(db)
+      db.prepare(
+        `INSERT INTO books
+          (title, file_path, storage_mode, sha256, shelf_id)
+         VALUES (?, ?, 'copy', ?, 1)`
+      ).run('Persisted', '/tmp/persisted.pdf', 'hash-persisted')
+      db.close()
+
+      const reopened = openDatabase(path)
+      const version = reopened.prepare('PRAGMA user_version').get() as { user_version: number }
+      const book = reopened
+        .prepare('SELECT title FROM books WHERE sha256 = ?')
+        .get('hash-persisted') as { title: string }
+
+      expect(version.user_version).toBe(currentSchemaVersion())
+      expect(book.title).toBe('Persisted')
+      expect(reopened.prepare('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'wal' })
+
+      reopened.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('enforces foreign keys and cascades annotations with their book', () => {
