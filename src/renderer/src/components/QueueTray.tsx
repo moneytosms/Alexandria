@@ -1,4 +1,4 @@
-import { runQueuedImports } from '../import-actions'
+import { cancelImports, runQueuedImports } from '../import-actions'
 import { useImportStore } from '../state/import-store'
 
 function formatSize(bytes: number): string {
@@ -16,6 +16,7 @@ export function QueueTray() {
   const rejected = useImportStore((state) => state.rejected)
   const error = useImportStore((state) => state.error)
   const importing = useImportStore((state) => state.importing)
+  const progress = useImportStore((state) => state.progress)
   const lastRun = useImportStore((state) => state.lastRun)
   const clear = useImportStore((state) => state.clear)
 
@@ -41,9 +42,15 @@ export function QueueTray() {
           <h2>{title}</h2>
         </div>
         <div className="queue__actions">
-          <button className="queue__clear" type="button" onClick={clear} disabled={importing}>
-            Clear
-          </button>
+          {importing ? (
+            <button className="queue__clear" type="button" onClick={() => void cancelImports()}>
+              Cancel
+            </button>
+          ) : (
+            <button className="queue__clear" type="button" onClick={clear}>
+              Clear
+            </button>
+          )}
           {candidates.length > 0 ? (
             <button
               className="button queue__import"
@@ -56,6 +63,39 @@ export function QueueTray() {
           ) : null}
         </div>
       </div>
+
+      {importing && progress ? (
+        <div className="queue__progress">
+          <div className="queue__progress-head">
+            <span title={progress.name}>{progress.name}</span>
+            <span>
+              {progress.index}/{progress.total}
+            </span>
+          </div>
+          <div className="queue__bar" aria-hidden="true">
+            <span
+              style={{
+                width: `${
+                  progress.phase === 'indexing' && progress.pages
+                    ? Math.round(((progress.current ?? 0) / progress.pages) * 100)
+                    : Math.round(((progress.index - 1) / Math.max(1, progress.total)) * 100)
+                }%`
+              }}
+            />
+          </div>
+          <p className="queue__phase">
+            {progress.phase === 'queued'
+              ? 'Waiting'
+              : progress.phase === 'converting'
+                ? 'Converting with LibreOffice'
+                : progress.phase === 'reading'
+                  ? 'Reading the converted PDF'
+                  : progress.pages
+                    ? `Indexing page ${progress.current ?? 0} of ${progress.pages}`
+                    : 'Indexing text'}
+          </p>
+        </div>
+      ) : null}
 
       {candidates.length > 0 ? (
         <ul className="queue__list">

@@ -55,14 +55,23 @@ export async function runQueuedImports(): Promise<void> {
   if (state.importing || state.candidates.length === 0) return
 
   state.beginImport()
+  const unsubscribe = window.alexandria.onImportProgress((progress) => {
+    useImportStore.getState().setProgress(progress)
+  })
 
   try {
     const result = await window.alexandria.importBooks(state.candidates.map((file) => file.path))
     useImportStore.getState().finishImport(result)
-    await useLibraryStore.getState().load()
+    await useLibraryStore.getState().refresh()
   } catch (error) {
     const message = describe(error)
     useImportStore.getState().failImport(message)
     void window.alexandria.log('error', 'Import run failed', message).catch(() => undefined)
+  } finally {
+    unsubscribe()
   }
+}
+
+export async function cancelImports(): Promise<void> {
+  await window.alexandria.cancelImport()
 }

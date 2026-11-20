@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
+import { MusicDock } from './components/MusicDock'
 import { QueueTray } from './components/QueueTray'
+import { SearchOverlay } from './components/SearchOverlay'
 import { queueDroppedFiles } from './import-actions'
 import { navigate, useView, viewIds, viewMeta } from './router'
 import { useLibraryStore, type LibraryStatus } from './state/library-store'
+import { useUiStore } from './state/ui-store'
 import { IndexView } from './views/IndexView'
 import { LibrarianView } from './views/LibrarianView'
 import { MapView } from './views/MapView'
@@ -23,6 +26,8 @@ export default function App() {
   const books = useLibraryStore((state) => state.books)
   const status = useLibraryStore((state) => state.status)
   const loadLibrary = useLibraryStore((state) => state.load)
+  const setSearchOpen = useUiStore((state) => state.setSearchOpen)
+  const selectedBook = useUiStore((state) => state.selectedBook)
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
   const meta = viewMeta[view]
@@ -67,7 +72,7 @@ export default function App() {
 
   return (
     <div
-      className="app"
+      className={`app ${view === 'reader' ? 'app--reader' : ''}`}
       onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
@@ -104,7 +109,9 @@ export default function App() {
         </nav>
 
         <div className="rail__foot">
-          <span className="rail__count">{library?.books ?? 0} volumes</span>
+          <span className="rail__count">
+            {library?.books ?? 0} {(library?.books ?? 0) === 1 ? 'volume' : 'volumes'}
+          </span>
           <span className="rail__path" title={library?.root ?? undefined}>
             {library?.root ?? 'Locating library…'}
           </span>
@@ -115,10 +122,22 @@ export default function App() {
         <header className="topbar">
           <div>
             <p className="eyebrow">{meta.label}</p>
-            <h1>{meta.title}</h1>
+            <h1>{view === 'reader' && selectedBook ? selectedBook.title : meta.title}</h1>
           </div>
           <div className="topbar__meta">
-            <span className="topbar__context">{meta.context}</span>
+            <span className="topbar__context">
+              {view === 'reader' && selectedBook ? selectedBook.author ?? meta.context : meta.context}
+            </span>
+            <button
+              type="button"
+              className="search-trigger"
+              onClick={() => setSearchOpen(true)}
+              aria-label="Search the library"
+            >
+              <span aria-hidden="true">⌕</span>
+              <span>Search the library</span>
+              <kbd>⌘K</kbd>
+            </button>
             <span className={`status status--${status}`}>
               <span className="status__dot" aria-hidden="true" />
               {statusLabel[status]}
@@ -136,6 +155,8 @@ export default function App() {
       </main>
 
       <QueueTray />
+      <MusicDock />
+      <SearchOverlay />
 
       {dragging ? (
         <div className="drop-overlay" aria-hidden="true">

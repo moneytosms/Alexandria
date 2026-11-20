@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 import type { AlexandriaApi } from '../../shared/api'
 
 declare global {

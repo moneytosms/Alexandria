@@ -1,4 +1,10 @@
-import type { ImportBatchResult, ImportCandidate, ImportRejection, ImportScanResult } from '@shared/types'
+import type {
+  ImportBatchResult,
+  ImportCandidate,
+  ImportProgress,
+  ImportRejection,
+  ImportScanResult
+} from '@shared/types'
 import { create } from 'zustand'
 
 interface ImportState {
@@ -6,8 +12,10 @@ interface ImportState {
   rejected: ImportRejection[]
   error: string | null
   importing: boolean
+  progress: ImportProgress | null
   lastRun: ImportBatchResult | null
   addScan: (result: ImportScanResult) => void
+  setProgress: (progress: ImportProgress | null) => void
   setError: (message: string | null) => void
   beginImport: () => void
   finishImport: (result: ImportBatchResult) => void
@@ -32,6 +40,7 @@ export const useImportStore = create<ImportState>((set) => ({
   rejected: [],
   error: null,
   importing: false,
+  progress: null,
   lastRun: null,
   addScan: (result) =>
     set((state) => ({
@@ -41,7 +50,8 @@ export const useImportStore = create<ImportState>((set) => ({
       lastRun: null
     })),
   setError: (message) => set({ error: message }),
-  beginImport: () => set({ importing: true, error: null, lastRun: null }),
+  setProgress: (progress) => set({ progress }),
+  beginImport: () => set({ importing: true, progress: null, error: null, lastRun: null }),
   finishImport: (result) =>
     set((state) => {
       const completed = new Set(
@@ -52,10 +62,11 @@ export const useImportStore = create<ImportState>((set) => ({
 
       return {
         importing: false,
+        progress: null,
         lastRun: result,
         candidates: state.candidates.filter((candidate) => !completed.has(candidate.path))
       }
     }),
-  failImport: (message) => set({ importing: false, error: message }),
-  clear: () => set({ candidates: [], rejected: [], error: null, lastRun: null })
+  failImport: (message) => set({ importing: false, progress: null, error: message }),
+  clear: () => set({ candidates: [], rejected: [], error: null, lastRun: null, progress: null })
 }))
