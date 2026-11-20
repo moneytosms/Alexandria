@@ -1,11 +1,26 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
 import { IPC } from '../shared/ipc'
+import { getLibraryInfo } from './library/info'
+import { rememberLibraryRoot, resolveLibraryRoot } from './library/location'
+import { closeLibrary, getLibrary, openLibrary } from './library/service'
+import { getAllSettings, setSetting } from './library/settings'
 
 app.setName('Alexandria')
 app.commandLine.appendSwitch('ozone-platform-hint', 'auto')
 
 ipcMain.handle(IPC.appPing, () => 'pong')
+
+ipcMain.handle(IPC.libraryInfo, () => getLibraryInfo())
+
+ipcMain.handle(IPC.settingsGet, () => getAllSettings(getLibrary().db))
+
+ipcMain.handle(IPC.settingsSet, (_event, key: unknown, value: unknown) => {
+  if (typeof key !== 'string' || typeof value !== 'string') {
+    throw new Error('Invalid settings payload')
+  }
+  setSetting(getLibrary().db, key, value)
+})
 
 function openExternal(url: string): void {
   if (url.startsWith('http://') || url.startsWith('https://')) {
@@ -62,11 +77,19 @@ function createWindow(): BrowserWindow {
 }
 
 void app.whenReady().then(() => {
+  const root = resolveLibraryRoot()
+  rememberLibraryRoot(root)
+  openLibrary(root)
+
   createWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+app.on('before-quit', () => {
+  closeLibrary()
 })
 
 app.on('window-all-closed', () => {

@@ -68,10 +68,45 @@ h1 {
 }
 
 .lede {
-  margin: 0 0 2.5rem;
+  margin: 0 0 2rem;
   font-size: 1.05rem;
   line-height: 1.6;
   color: var(--muted);
+}
+
+.stats {
+  display: flex;
+  gap: 2.75rem;
+  margin: 0 0 1.25rem;
+  padding: 1.25rem 0;
+  border-top: 1px solid rgba(176, 141, 87, 0.18);
+  border-bottom: 1px solid rgba(176, 141, 87, 0.18);
+}
+
+.stat {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.stat dt {
+  font-size: 0.64rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.stat dd {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 1.65rem;
+  color: var(--parchment);
+}
+
+.path {
+  margin: 0 0 2rem;
+  font-size: 0.74rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .status {

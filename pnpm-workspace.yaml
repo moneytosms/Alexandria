@@ -1,6 +1,5 @@
 allowBuilds:
   '@napi-rs/canvas': true
-  better-sqlite3: true
   electron: true
   electron-builder: true
   electron-winstaller: true

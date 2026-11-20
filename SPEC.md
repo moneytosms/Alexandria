@@ -411,7 +411,7 @@ Notes:
 - Electron with TypeScript everywhere.
 - Renderer: React, Vite, three.js through react-three-fiber, Zustand for state.
 - PDF: pdfjs-dist in the renderer. Text extraction and cover generation in a background process with pdfjs-dist plus @napi-rs/canvas.
-- Database: better-sqlite3 in the main process, FTS5 enabled.
+- Database: node:sqlite in the main process. Electron 45 bundles Node 24 with SQLite and FTS5, so there is no native module to rebuild.
 - Ink: perfect-freehand for smoothing.
 - Packaging: electron-builder.
 - Tests: Vitest, Playwright for Electron.
@@ -645,7 +645,7 @@ Auto-detect by measuring the first 120 frames and stepping down if the average f
 - CI matrix builds all three from one codebase.
 - The v1 clean-machine target is Linux. Windows and macOS builds are unsigned developer builds, not the supported install path in v1.
 - Code signing and notarization are out of scope for v1. They are future work.
-- Native dependencies: better-sqlite3 and @napi-rs/canvas. Both have prebuilt binaries, with a rebuild step in CI.
+- Native dependencies: only @napi-rs/canvas, which ships prebuilt binaries. SQLite is built into Node.
 - No auto-update in v1. Builds are manual.
 - Linux on Wayland may need `--ozone-platform-hint=auto`.
 - Application ID `dev.sms.alexandria`, product name `Alexandria`.
@@ -815,6 +815,7 @@ Everything here is deliberately out of v1. The data model and architecture shoul
 - Electron plus TypeScript over Tauri, because the app is a 3D room and a PDF canvas, and one Chromium is worth more than a small binary.
 - PDF.js as the only PDF engine in v1.
 - SQLite plus FTS5 as the library format. The folder is portable.
+- Database access uses node:sqlite, not better-sqlite3. It is built into Electron's Node, supports FTS5, and removes native rebuilds.
 - Local-first, no accounts, no network.
 - Curated library, not a downloads mirror.
 - 3D with glide navigation, no free-walk.

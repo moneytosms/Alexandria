@@ -51,7 +51,7 @@ M2 (reader and annotations) and M3 (library model) can run in parallel after M1.
 - Preload exposes a typed, minimal IPC API. No Node in the renderer.
 - Renderer owns three.js, PDF.js, annotations overlay, map, librarian, index, player.
 - PDF extraction runs in a worker or utility process with pdfjs-dist and @napi-rs/canvas.
-- SQLite WAL, foreign keys, `user_version` migrations.
+- SQLite through node:sqlite, WAL, foreign keys, `user_version` migrations. No native database module.
 - Layout tables are authoritative. The 3D room is projected from them. Growth only appends.
 - The library is a folder: `library.db`, `config.json`, `books/`, `covers/`, `thumbs/`, `cache/`, `logs/`.
 

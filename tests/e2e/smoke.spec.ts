@@ -1,11 +1,31 @@
 import { _electron as electron, expect, test } from '@playwright/test'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
-test('opens the Alexandria shell and reaches the main process', async () => {
-  const app = await electron.launch({ args: ['.'] })
+let libraryPath: string
+
+test.beforeAll(() => {
+  libraryPath = mkdtempSync(join(tmpdir(), 'alexandria-e2e-'))
+})
+
+test.afterAll(() => {
+  rmSync(libraryPath, { recursive: true, force: true })
+})
+
+test('opens the Alexandria shell with a fresh library', async () => {
+  const app = await electron.launch({
+    args: ['.'],
+    env: { ...process.env, ALEXANDRIA_LIBRARY_PATH: libraryPath } as Record<string, string>
+  })
   const page = await app.firstWindow()
 
   await expect(page.getByRole('heading', { name: 'The library is being built.' })).toBeVisible()
   await expect(page.getByText('ready')).toBeVisible()
+  await expect(page.getByText(libraryPath)).toBeVisible()
+
+  const shelves = page.locator('.stat', { hasText: 'Shelves' }).locator('dd')
+  await expect(shelves).toHaveText('20')
 
   const renderer = await page.evaluate(() => {
     const canvas = document.createElement('canvas')
@@ -22,6 +42,8 @@ test('opens the Alexandria shell and reaches the main process', async () => {
 
   expect(nodeGlobals.require).toBe('undefined')
   expect(nodeGlobals.process).toBe('undefined')
+  expect(existsSync(join(libraryPath, 'library.db'))).toBe(true)
+  expect(existsSync(join(libraryPath, 'config.json'))).toBe(true)
 
   await app.close()
 })
