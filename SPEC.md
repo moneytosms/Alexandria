@@ -564,7 +564,7 @@ Palette:
 - Lamplight `#FFB86B`
 - Marble `#D9D2C5`
 
-Typography: a serif display face for room labels and book titles (EB Garamond or Cormorant), a clean sans for UI (Inter). Both bundled, OFL licensed.
+Typography: Almendra, a calligraphic serif, for room labels and book titles; a clean sans (Inter) for UI. Both bundled, OFL licensed.
 
 Motion: weighty and slow. Camera 600 to 900ms ease-in-out. UI 200 to 250ms. No bounce, no spring, no cartoon easing.
 

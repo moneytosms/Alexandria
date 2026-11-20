@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { closeDatabase, openDatabase } from '../db'
 import { readLibraryConfig, writeLibraryConfig, type LibraryConfig } from './config'
 import { libraryPaths, type LibraryPaths } from './paths'
+import { rebaseCopiedBooks } from './reconcile'
 import { seedLibraryLayout } from './seed'
 import { seedDefaultSettings } from './settings'
 
@@ -44,6 +45,7 @@ export function openLibrary(root: string): Library {
   const db = openDatabase(paths.database)
   seedLibraryLayout(db)
   seedDefaultSettings(db)
+  rebaseCopiedBooks(db, root)
 
   current = { root, paths, config, db }
   return current

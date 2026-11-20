@@ -13,7 +13,7 @@ The full design is in `SPEC.md`. The task list is in `TODO.md`.
 
 - M0 is complete. The app builds, launches, creates a library folder, and shows a five-view shell.
 - Git repository initialized at `/home/sms/Projects/Alexandria`. Commits: scaffold, database, and the in-progress M0 completion commit.
-- Working: electron-vite, React, strict TypeScript, secure preload, typed IPC, node:sqlite with FTS5, migrations, first-run library location, settings, rotating logs, error boundaries, five-view hash router, bundled Cormorant Garamond and Inter, Vitest, Playwright, electron-builder, CI workflow.
+- Working: electron-vite, React, strict TypeScript, secure preload, typed IPC, node:sqlite with FTS5, migrations, first-run library location, settings, rotating logs, error boundaries, five-view hash router, bundled Almendra and Inter, Vitest, Playwright, electron-builder, CI workflow.
 - Import entry points are working: file picker, folder scan, and drag and drop feed a visible queue with unsupported and unreadable files reported. Nothing is written to the database yet.
 - Tests: `pnpm test` has 6 files and 23 passing tests. `pnpm test:e2e` has 4 passing Electron tests. `pnpm build` and `pnpm exec electron-builder --linux dir` pass locally.
 - CI workflow exists at `.github/workflows/ci.yml` but has not run remotely because the repo has no remote yet.

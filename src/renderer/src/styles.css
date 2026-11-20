@@ -8,7 +8,7 @@
   --parchment: #e9dfc9;
   --muted: #998b76;
   --line: rgba(176, 141, 87, 0.16);
-  --serif: 'Cormorant Garamond', 'Iowan Old Style', Palatino, Georgia, serif;
+  --serif: 'Almendra', 'Iowan Old Style', Palatino, Georgia, serif;
   --sans: 'Inter', 'Segoe UI', system-ui, sans-serif;
 
   color-scheme: dark;
@@ -706,6 +706,45 @@ button {
   color: var(--parchment);
 }
 
+.queue__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.queue__import {
+  padding: 0.4rem 0.65rem;
+  font-size: 0.54rem;
+  letter-spacing: 0.13em;
+}
+
+.queue__clear:disabled,
+.queue__import:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.queue__summary {
+  margin: 0.8rem 0 0;
+  font-size: 0.68rem;
+  color: var(--brass-bright);
+}
+
+.queue__failures {
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.queue__failures li {
+  overflow: hidden;
+  font-size: 0.66rem;
+  line-height: 1.6;
+  color: #bd8a76;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .queue__list {
   display: grid;
   gap: 0;
@@ -898,6 +937,42 @@ button {
 
 .index__empty .eyebrow {
   color: var(--brass);
+}
+
+.index__book-title {
+  display: block;
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  line-height: 1.2;
+  color: var(--parchment);
+}
+
+.index__book-format {
+  display: inline-block;
+  margin-top: 0.3rem;
+  font-size: 0.52rem;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+}
+
+.index__state {
+  display: inline-block;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.52rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.index__state--reading {
+  color: var(--brass-bright);
+  border-color: rgba(176, 141, 87, 0.35);
+}
+
+.index__state--finished {
+  color: #93a37c;
+  border-color: rgba(147, 163, 124, 0.3);
 }
 
 .index__footnote {

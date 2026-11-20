@@ -1,4 +1,5 @@
 import { useImportStore } from './state/import-store'
+import { useLibraryStore } from './state/library-store'
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : 'Could not read the selection.'
@@ -47,4 +48,21 @@ export async function queueDroppedFiles(files: FileList): Promise<void> {
     const result = await window.alexandria.scanImportPaths(paths)
     useImportStore.getState().addScan(result)
   })
+}
+
+export async function runQueuedImports(): Promise<void> {
+  const state = useImportStore.getState()
+  if (state.importing || state.candidates.length === 0) return
+
+  state.beginImport()
+
+  try {
+    const result = await window.alexandria.importBooks(state.candidates.map((file) => file.path))
+    useImportStore.getState().finishImport(result)
+    await useLibraryStore.getState().load()
+  } catch (error) {
+    const message = describe(error)
+    useImportStore.getState().failImport(message)
+    void window.alexandria.log('error', 'Import run failed', message).catch(() => undefined)
+  }
 }

@@ -52,6 +52,23 @@ export interface Book {
   readerJson: string | null
 }
 
+export type ImportOutcomeStatus = 'imported' | 'duplicate' | 'failed'
+
+export interface ImportOutcome {
+  path: string
+  name: string
+  status: ImportOutcomeStatus
+  bookId?: number
+  message?: string
+}
+
+export interface ImportBatchResult {
+  outcomes: ImportOutcome[]
+  imported: number
+  duplicates: number
+  failed: number
+}
+
 export interface NewBook {
   title: string
   author?: string | null

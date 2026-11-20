@@ -6,5 +6,7 @@ export const IPC = {
   logWrite: 'log:write',
   importPickFiles: 'import:pickFiles',
   importPickFolder: 'import:pickFolder',
-  importScanPaths: 'import:scanPaths'
+  importScanPaths: 'import:scanPaths',
+  importRun: 'import:run',
+  booksList: 'books:list'
 } as const

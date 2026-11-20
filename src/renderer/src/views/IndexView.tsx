@@ -1,18 +1,26 @@
 import type { LibraryInfo } from '@shared/api'
+import type { Book } from '@shared/types'
 import { navigate } from '../router'
 
 interface Props {
   library: LibraryInfo | null
+  books: Book[]
 }
 
-export function IndexView({ library }: Props) {
-  const empty = !library || library.books === 0
+const stateLabels: Record<Book['readingState'], string> = {
+  unread: 'Unread',
+  reading: 'Reading',
+  finished: 'Finished'
+}
+
+export function IndexView({ library, books }: Props) {
+  const empty = books.length === 0
 
   return (
     <div className="index">
       <div className="index__bar">
         <p className="index__count">
-          {library?.books ?? '—'} {library?.books === 1 ? 'volume' : 'volumes'}
+          {books.length} {books.length === 1 ? 'volume' : 'volumes'}
         </p>
         <span className="index__hint">Sorted by date added</span>
       </div>
@@ -45,7 +53,24 @@ export function IndexView({ library }: Props) {
                   </div>
                 </td>
               </tr>
-            ) : null}
+            ) : (
+              books.map((book) => (
+                <tr key={book.id}>
+                  <td>
+                    <span className="index__book-title">{book.title}</span>
+                    <span className="index__book-format">{book.format.toUpperCase()}</span>
+                  </td>
+                  <td>{book.author ?? '—'}</td>
+                  <td>{book.pageCount ?? '—'}</td>
+                  <td>{book.shelfId === null ? 'Inbox' : `Shelf ${book.shelfId}`}</td>
+                  <td>
+                    <span className={`index__state index__state--${book.readingState}`}>
+                      {stateLabels[book.readingState]}
+                    </span>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>

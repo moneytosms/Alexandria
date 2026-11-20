@@ -1,19 +1,17 @@
-import type { LibraryInfo } from '@shared/api'
 import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { QueueTray } from './components/QueueTray'
 import { queueDroppedFiles } from './import-actions'
 import { navigate, useView, viewIds, viewMeta } from './router'
+import { useLibraryStore, type LibraryStatus } from './state/library-store'
 import { IndexView } from './views/IndexView'
 import { LibrarianView } from './views/LibrarianView'
 import { MapView } from './views/MapView'
 import { ReaderView } from './views/ReaderView'
 import { RoomView } from './views/RoomView'
 
-type Status = 'connecting' | 'ready' | 'offline'
-
 const numerals = ['I', 'II', 'III', 'IV', 'V']
 
-const statusLabel: Record<Status, string> = {
+const statusLabel: Record<LibraryStatus, string> = {
   connecting: 'Opening library',
   ready: 'Library ready',
   offline: 'Main process offline'
@@ -21,8 +19,10 @@ const statusLabel: Record<Status, string> = {
 
 export default function App() {
   const view = useView()
-  const [status, setStatus] = useState<Status>('connecting')
-  const [library, setLibrary] = useState<LibraryInfo | null>(null)
+  const library = useLibraryStore((state) => state.info)
+  const books = useLibraryStore((state) => state.books)
+  const status = useLibraryStore((state) => state.status)
+  const loadLibrary = useLibraryStore((state) => state.load)
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
   const meta = viewMeta[view]
@@ -58,22 +58,8 @@ export default function App() {
 
 
   useEffect(() => {
-    let alive = true
-
-    Promise.all([window.alexandria.ping(), window.alexandria.libraryInfo()])
-      .then(([, info]) => {
-        if (!alive) return
-        setLibrary(info)
-        setStatus('ready')
-      })
-      .catch(() => {
-        if (alive) setStatus('offline')
-      })
-
-    return () => {
-      alive = false
-    }
-  }, [])
+    void loadLibrary()
+  }, [loadLibrary])
 
   useEffect(() => {
     document.title = `${meta.title} · Alexandria`
@@ -145,7 +131,7 @@ export default function App() {
           {view === 'reader' ? <ReaderView /> : null}
           {view === 'map' ? <MapView library={library} /> : null}
           {view === 'librarian' ? <LibrarianView library={library} /> : null}
-          {view === 'index' ? <IndexView library={library} /> : null}
+          {view === 'index' ? <IndexView library={library} books={books} /> : null}
         </section>
       </main>
 

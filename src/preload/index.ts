@@ -11,6 +11,8 @@ const api: AlexandriaApi = {
   pickImportFiles: () => ipcRenderer.invoke(IPC.importPickFiles),
   pickImportFolder: () => ipcRenderer.invoke(IPC.importPickFolder),
   scanImportPaths: (paths) => ipcRenderer.invoke(IPC.importScanPaths, paths),
+  importBooks: (paths) => ipcRenderer.invoke(IPC.importRun, paths),
+  listBooks: () => ipcRenderer.invoke(IPC.booksList),
   pathForFile: (file) => webUtils.getPathForFile(file)
 }
 

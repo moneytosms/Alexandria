@@ -1,4 +1,4 @@
-import type { ImportScanResult } from './types'
+import type { Book, ImportBatchResult, ImportScanResult } from './types'
 
 export interface LibraryInfo {
   root: string
@@ -21,5 +21,7 @@ export interface AlexandriaApi {
   pickImportFiles: () => Promise<ImportScanResult>
   pickImportFolder: () => Promise<ImportScanResult>
   scanImportPaths: (paths: string[]) => Promise<ImportScanResult>
+  importBooks: (paths: string[]) => Promise<ImportBatchResult>
+  listBooks: () => Promise<Book[]>
   pathForFile: (file: File) => string
 }
