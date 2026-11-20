@@ -1,5 +1,6 @@
 export const IPC = {
   appPing: 'app:ping',
+  appInfo: 'app:info',
   libraryInfo: 'library:info',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',

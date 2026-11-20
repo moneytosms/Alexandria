@@ -2,6 +2,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { dismissWelcome } from './helpers'
 
 let libraryPath: string
 let fixtures: string
@@ -45,6 +46,7 @@ async function launch(): Promise<{ app: ElectronApplication; page: Page }> {
     env: { ...process.env, ALEXANDRIA_LIBRARY_PATH: libraryPath } as Record<string, string>
   })
   const page = await app.firstWindow()
+  await dismissWelcome(page)
   await expect(page.getByRole('heading', { name: 'The reading room', level: 1 })).toBeVisible()
   return { app, page }
 }

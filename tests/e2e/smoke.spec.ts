@@ -2,6 +2,7 @@ import { _electron as electron, expect, test } from '@playwright/test'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { dismissWelcome } from './helpers'
 
 let libraryPath: string
 
@@ -19,6 +20,7 @@ test('opens the Alexandria shell with a fresh library', async () => {
     env: { ...process.env, ALEXANDRIA_LIBRARY_PATH: libraryPath } as Record<string, string>
   })
   const page = await app.firstWindow()
+  await dismissWelcome(page)
 
   await expect(page.getByRole('heading', { name: 'The reading room', level: 1 })).toBeVisible()
   await expect(page.getByText('Library ready')).toBeVisible()
@@ -54,6 +56,7 @@ test('navigates all five views', async () => {
     env: { ...process.env, ALEXANDRIA_LIBRARY_PATH: libraryPath } as Record<string, string>
   })
   const page = await app.firstWindow()
+  await dismissWelcome(page)
 
   const views = [
     { nav: 'Room', heading: 'The reading room' },
@@ -82,6 +85,7 @@ test('logs a thrown renderer error and keeps the UI alive', async () => {
     env: { ...process.env, ALEXANDRIA_LIBRARY_PATH: libraryPath } as Record<string, string>
   })
   const page = await app.firstWindow()
+  await dismissWelcome(page)
 
   await expect(page.getByRole('heading', { name: 'The reading room', level: 1 })).toBeVisible()
 

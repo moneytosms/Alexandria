@@ -1,6 +1,6 @@
 import type { LibraryInfo } from '@shared/api'
-import type { Floor, Section, Wall } from '@shared/types'
-import { useMemo, useState } from 'react'
+import type { Floor, Room, Section, Wall } from '@shared/types'
+import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { navigate } from '../router'
 import { useLibraryStore } from '../state/library-store'
 import { useUiStore } from '../state/ui-store'
@@ -27,7 +27,12 @@ export function MapView({ library }: Props) {
   const floors = useLibraryStore((state) => state.layout)
   const books = useLibraryStore((state) => state.books)
   const setRoom = useUiStore((state) => state.setRoom)
+  const currentRoom = useUiStore((state) => state.room)
   const [floorId, setFloorId] = useState<number | null>(null)
+  const [view, setView] = useState({ zoom: 1, x: 0, y: 0 })
+  const drag = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(
+    null
+  )
 
   const floor: Floor | null = useMemo(
     () => floors.find((entry) => entry.id === floorId) ?? floors[0] ?? null,
@@ -56,72 +61,159 @@ export function MapView({ library }: Props) {
       ).length
     : 0
 
-  const openRoom = (): void => {
-    if (!room) return
-    setRoom({ floorId: room.floorId, roomId: room.id })
+  const travel = (target: Room | null = room): void => {
+    if (!target) return
+    setRoom({ floorId: target.floorId, roomId: target.id })
     navigate('room')
   }
 
+  const zoomBy = (factor: number): void => {
+    setView((current) => ({
+      ...current,
+      zoom: Math.min(2.4, Math.max(0.6, Math.round(current.zoom * factor * 100) / 100))
+    }))
+  }
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0) return
+    drag.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: view.x,
+      originY: view.y
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const active = drag.current
+    if (!active) return
+    setView((current) => ({
+      ...current,
+      x: active.originX + (event.clientX - active.startX),
+      y: active.originY + (event.clientY - active.startY)
+    }))
+  }
+
+  const endDrag = (): void => {
+    drag.current = null
+  }
+
+  const here = room !== null && currentRoom.roomId === room.id
+
   return (
     <div className="map">
-      <div>
-        <div className="map__floors">
-          {floors.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              className="chip"
-              aria-current={floor?.id === entry.id ? 'true' : undefined}
-              onClick={() => {
-                setFloorId(entry.id)
-                setRoomId(entry.rooms[0]?.id ?? null)
-              }}
-            >
-              {entry.name}
-            </button>
-          ))}
-        </div>
-
-        <div className="map__plan" aria-label={room ? `${room.name} floor plan` : 'Floor plan'}>
-          {wallOrder.map((wall) => {
-            const sections = sectionsByWall.get(wall) ?? []
-            return (
-              <div
-                key={wall}
-                className={`map__section ${wallClass[wall]} ${sections.length === 0 ? 'map__section--empty' : ''}`}
+      <div className="map__stage">
+        <div className="map__toolbar">
+          <div className="map__floors">
+            {floors.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                className="chip"
+                aria-current={floor?.id === entry.id ? 'true' : undefined}
+                onClick={() => {
+                  setFloorId(entry.id)
+                  setRoomId(entry.rooms[0]?.id ?? null)
+                }}
               >
-                <span className="map__wall">{wall}</span>
-                {sections.length === 0 ? (
-                  <span className="map__detail">empty wall</span>
-                ) : (
-                  sections.map((section) => (
-                    <button
-                      key={section.id}
-                      type="button"
-                      className="map__section-button"
-                      onClick={() => {
-                        if (!room) return
-                        setRoom({ floorId: room.floorId, roomId: room.id })
-                        navigate('room')
-                      }}
-                    >
-                      <span>{section.name}</span>
-                      <span className="map__detail">{sectionSummary(section)}</span>
-                    </button>
-                  ))
-                )}
-              </div>
-            )
-          })}
-
-          <div className="map__hall">
-            <span className="map__hall-name">{room?.name ?? 'Main Hall'}</span>
-            <span className="map__detail">{roomBooks} volumes · reading desks</span>
-            <button className="button button--quiet map__enter" type="button" onClick={openRoom}>
-              Enter the room
+                {entry.name}
+              </button>
+            ))}
+          </div>
+          <div className="map__zoom" role="group" aria-label="Plan zoom">
+            <button type="button" className="icon-button" aria-label="Zoom out" onClick={() => zoomBy(1 / 1.2)}>
+              −
+            </button>
+            <span>{Math.round(view.zoom * 100)}%</span>
+            <button type="button" className="icon-button" aria-label="Zoom in" onClick={() => zoomBy(1.2)}>
+              +
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Reset view"
+              onClick={() => setView({ zoom: 1, x: 0, y: 0 })}
+            >
+              ⌂
             </button>
           </div>
         </div>
+
+        <div
+          className="map__plan-wrap"
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+        >
+          <div
+            className="map__plan"
+            aria-label={room ? `${room.name} floor plan` : 'Floor plan'}
+            style={{
+              transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`
+            }}
+          >
+            {wallOrder.map((wall) => {
+              const sections = sectionsByWall.get(wall) ?? []
+              return (
+                <div
+                  key={wall}
+                  className={`map__section ${wallClass[wall]} ${sections.length === 0 ? 'map__section--empty' : ''}`}
+                >
+                  <span className="map__wall">{wall}</span>
+                  {sections.length === 0 ? (
+                    <span className="map__detail">empty wall</span>
+                  ) : (
+                    sections.map((section) => (
+                      <div key={section.id} className="map__section-card">
+                        <button
+                          type="button"
+                          className="map__section-button"
+                          onClick={() => travel()}
+                        >
+                          <span>{section.name}</span>
+                          <span className="map__detail">{sectionSummary(section)}</span>
+                        </button>
+                        {section.bays.length > 0 ? (
+                          <div className="map__bays">
+                            {section.bays.map((bay) => {
+                              const count = bay.shelves.reduce(
+                                (sum, shelf) => sum + shelf.bookCount,
+                                0
+                              )
+                              return (
+                                <button
+                                  key={bay.id}
+                                  type="button"
+                                  className="map__bay"
+                                  title={`Bay ${bay.sortIndex + 1} · ${count} volumes`}
+                                  onClick={() => travel()}
+                                >
+                                  {bay.sortIndex + 1}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )
+            })}
+
+            <div className="map__hall">
+              <span className="map__hall-name">{room?.name ?? 'Main Hall'}</span>
+              <span className="map__detail">{roomBooks} volumes · reading desks</span>
+              {here ? <span className="map__youarehere">You are here</span> : null}
+              <button className="button button--quiet map__enter" type="button" onClick={() => travel()}>
+                {here ? 'Back to the room' : 'Enter the room'}
+              </button>
+            </div>
+          </div>
+        </div>
+        <p className="map__hint">Drag the plan to pan · use the buttons to zoom</p>
       </div>
 
       <aside className="map__side">

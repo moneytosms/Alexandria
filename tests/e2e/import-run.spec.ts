@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { writePdf } from '../fixtures/pdf'
+import { dismissWelcome } from './helpers'
 
 let libraryPath: string
 let sourcePath: string
@@ -30,6 +31,7 @@ test('imports a PDF, dedupes identical content, and persists it', async () => {
     env: { ...process.env, ALEXANDRIA_LIBRARY_PATH: libraryPath } as Record<string, string>
   })
   const page = await app.firstWindow()
+  await dismissWelcome(page)
 
   await page.getByRole('button', { name: 'Librarian', exact: true }).click()
 

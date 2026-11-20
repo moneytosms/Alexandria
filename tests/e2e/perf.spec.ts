@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { dismissWelcome } from './helpers'
 
 let libraryPath: string
 
@@ -34,6 +35,7 @@ test('renders a 500-book room as one book batch within a frame budget', async ()
   // First launch creates the schema and the default four-wall layout.
   const first = await launch()
   const firstPage = await first.firstWindow()
+  await dismissWelcome(firstPage)
   await expect(firstPage.getByRole('heading', { name: 'The reading room', level: 1 })).toBeVisible()
   await first.close()
 
@@ -81,6 +83,7 @@ test('renders a 500-book room as one book batch within a frame budget', async ()
 
   const app = await launch()
   const page = await app.firstWindow()
+  await dismissWelcome(page)
   await expect(page.getByRole('heading', { name: 'The reading room', level: 1 })).toBeVisible()
 
   const info = await page.evaluate(() => window.alexandria.libraryInfo())

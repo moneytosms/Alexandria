@@ -1,4 +1,4 @@
-import type { LibraryHealth, LibraryInfo } from '@shared/api'
+import type { AppInfo, LibraryHealth, LibraryInfo } from '@shared/api'
 import { useEffect, useState } from 'react'
 import { useLibraryStore } from '../state/library-store'
 import { useSettingsStore } from '../state/settings-store'
@@ -17,6 +17,11 @@ const shortcuts: Array<[string, string]> = [
   ['B', 'Bookmark this page'],
   ['H', 'Highlight tool'],
   ['I', 'Ink tool'],
+  ['E', 'Eraser'],
+  ['S', 'Two-page spread'],
+  ['Ctrl / Cmd + Z', 'Undo ink'],
+  ['Ctrl / Cmd + F', 'Search inside the book'],
+  ['?', 'Reader shortcut list'],
   ['Esc', 'Close the reader sidebar'],
   ['Ctrl / Cmd + ,', 'Open settings']
 ]
@@ -31,6 +36,7 @@ export function SettingsDialog({ library }: Props) {
   const setTracks = usePlayerStore((state) => state.setTracks)
 
   const [health, setHealth] = useState<LibraryHealth | null>(null)
+  const [info, setInfo] = useState<AppInfo | null>(null)
   const [folders, setFolders] = useState<string[]>([])
   const [message, setMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -40,6 +46,7 @@ export function SettingsDialog({ library }: Props) {
     setMessage(null)
     void load()
     void window.alexandria.libraryHealth().then(setHealth).catch(() => setHealth(null))
+    void window.alexandria.appInfo().then(setInfo).catch(() => setInfo(null))
     void window.alexandria.musicFolders().then(setFolders).catch(() => setFolders([]))
   }, [open, load])
 
@@ -291,7 +298,13 @@ export function SettingsDialog({ library }: Props) {
             <p className="settings__path" title={health?.logFile}>
               Log: {health?.logFile ?? '—'}
             </p>
-            <p className="settings__muted">Electron {navigator.userAgent.match(/Electron\/([\d.]+)/)?.[1] ?? '—'}</p>
+            <p className="settings__muted">
+              {info ? `${info.name} ${info.version} · Electron ${info.electron} · ${info.platform}` : `Electron ${navigator.userAgent.match(/Electron\/([\d.]+)/)?.[1] ?? '—'}`}
+            </p>
+            <p className="settings__muted">
+              Local-first: no accounts, no cloud, no telemetry. The library lives in the folder
+              above; export the catalogue from the Library section to back it up.
+            </p>
           </section>
         </div>
 

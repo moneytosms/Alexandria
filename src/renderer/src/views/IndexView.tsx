@@ -154,7 +154,9 @@ export function IndexView({ library, books }: Props) {
         <p className="index__count">
           {visible.length} of {books.length} {books.length === 1 ? 'volume' : 'volumes'}
         </p>
-        <span className="index__hint">Click a column to sort · click a row to read</span>
+        <span className="index__hint">
+          Click a column to sort · click a row to read · ↑ ↓ to move between rows
+        </span>
       </div>
 
       <div className="index__table-wrap">
@@ -220,6 +222,16 @@ export function IndexView({ library, books }: Props) {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault()
                       open(book.id)
+                      return
+                    }
+                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                      event.preventDefault()
+                      const row = event.currentTarget as HTMLTableRowElement
+                      const next =
+                        event.key === 'ArrowDown'
+                          ? row.nextElementSibling
+                          : row.previousElementSibling
+                      if (next instanceof HTMLElement) next.focus()
                     }
                   }}
                 >

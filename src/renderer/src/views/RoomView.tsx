@@ -35,6 +35,19 @@ const brassMaterial = new THREE.MeshStandardMaterial({
   roughness: 0.35,
   metalness: 0.7
 })
+const ceilingMaterial = new THREE.MeshStandardMaterial({ color: '#17120e', roughness: 0.97 })
+const trimMaterial = new THREE.MeshStandardMaterial({
+  color: '#2b2119',
+  roughness: 0.72,
+  metalness: 0.16
+})
+const glassMaterial = new THREE.MeshStandardMaterial({
+  color: '#2f3a4c',
+  emissive: '#8fa3c4',
+  emissiveIntensity: 0.28,
+  roughness: 0.35,
+  metalness: 0.1
+})
 
 const bookColors = [
   '#6d2f27',
@@ -81,6 +94,48 @@ interface Anchor {
 function truncate(text: string, length: number): string {
   const value = text.trim()
   return value.length > length ? `${value.slice(0, length - 1)}…` : value
+}
+
+/* Soft radial textures, built once and shared by every room rebuild. */
+let shadowTexture: THREE.CanvasTexture | null = null
+let glowTexture: THREE.CanvasTexture | null = null
+
+function radialTexture(stops: Array<[number, string]>): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 128
+  const context = canvas.getContext('2d')
+  if (context) {
+    const gradient = context.createRadialGradient(64, 64, 2, 64, 64, 64)
+    for (const [offset, color] of stops) gradient.addColorStop(offset, color)
+    context.fillStyle = gradient
+    context.fillRect(0, 0, 128, 128)
+  }
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  return texture
+}
+
+function contactShadowTexture(): THREE.CanvasTexture {
+  if (!shadowTexture) {
+    shadowTexture = radialTexture([
+      [0, 'rgba(0,0,0,0.55)'],
+      [0.55, 'rgba(0,0,0,0.26)'],
+      [1, 'rgba(0,0,0,0)']
+    ])
+  }
+  return shadowTexture
+}
+
+function warmGlowTexture(): THREE.CanvasTexture {
+  if (!glowTexture) {
+    glowTexture = radialTexture([
+      [0, 'rgba(255,201,131,0.85)'],
+      [0.4, 'rgba(255,178,96,0.28)'],
+      [1, 'rgba(255,170,80,0)']
+    ])
+  }
+  return glowTexture
 }
 
 function buildSpineAtlas(books: Book[]): {
@@ -220,6 +275,20 @@ function shelvingBay(
     booksByShelf.set(shelf.id, list)
   }
 
+  const contact = new THREE.Mesh(
+    new THREE.PlaneGeometry(width + 0.5, 1.0),
+    new THREE.MeshBasicMaterial({
+      map: contactShadowTexture(),
+      transparent: true,
+      opacity: 0.7,
+      depthWrite: false
+    })
+  )
+  contact.rotation.x = -Math.PI / 2
+  contact.position.set(0, 0.008, depth / 2 + 0.3)
+  contact.renderOrder = 1
+  group.add(contact)
+
   bay.shelves.forEach((shelf, row) => {
     const y = 0.16 + row * spacing
     const board = new THREE.Mesh(new THREE.BoxGeometry(width - 0.08, 0.05, depth), wood)
@@ -318,13 +387,15 @@ function buildSpineBatch(placements: SpinePlacement[], texture: THREE.Texture): 
 
 function buildScene(
   room: Room,
-  books: Book[]
+  books: Book[],
+  quality: string
 ): {
   group: THREE.Group
   anchors: Map<number, Anchor>
   placements: SpinePlacement[]
   bookMesh: THREE.Mesh | null
   texture: THREE.CanvasTexture
+  dust: THREE.Points | null
 } {
   const scene = new THREE.Group()
   const anchors = new Map<number, Anchor>()
@@ -357,6 +428,136 @@ function buildScene(
     mesh.receiveShadow = true
     scene.add(mesh)
   }
+
+  // Ceiling with dark beams, so looking up closes the hall.
+  const ceiling = new THREE.Mesh(new THREE.BoxGeometry(roomWidth, 0.12, roomDepth), ceilingMaterial)
+  ceiling.position.y = wallHeight + 0.04
+  scene.add(ceiling)
+  for (const z of [-2.4, 0, 2.4]) {
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(roomWidth, 0.16, 0.18), woodDark)
+    beam.position.set(0, wallHeight - 0.08, z)
+    beam.castShadow = true
+    scene.add(beam)
+  }
+
+  // Columns at the corners, with a base and a capital.
+  for (const x of [-roomWidth / 2 + 0.3, roomWidth / 2 - 0.3]) {
+    for (const z of [-roomDepth / 2 + 0.3, roomDepth / 2 - 0.3]) {
+      const shaft = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.16, 0.18, wallHeight - 0.2, 18),
+        trimMaterial
+      )
+      shaft.position.set(x, wallHeight / 2, z)
+      shaft.castShadow = true
+      scene.add(shaft)
+
+      const base = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.16, 0.42), trimMaterial)
+      base.position.set(x, 0.08, z)
+      scene.add(base)
+
+      const capital = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.14, 0.44), trimMaterial)
+      capital.position.set(x, wallHeight - 0.12, z)
+      scene.add(capital)
+    }
+  }
+
+  // Clerestory windows above the shelves, with muntins and a dusk glow.
+  const windowXs = [-3.0, 0, 3.0]
+  for (const x of windowXs) {
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.72, 0.08), trimMaterial)
+    frame.position.set(x, 2.98, -roomDepth / 2 + 0.02)
+    scene.add(frame)
+
+    const glass = new THREE.Mesh(new THREE.PlaneGeometry(1.34, 0.56), glassMaterial)
+    glass.position.set(x, 2.98, -roomDepth / 2 + 0.07)
+    scene.add(glass)
+
+    for (const offset of [-0.45, 0, 0.45]) {
+      const muntin = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.6, 0.03), trimMaterial)
+      muntin.position.set(x + offset, 2.98, -roomDepth / 2 + 0.09)
+      scene.add(muntin)
+    }
+    const crossbar = new THREE.Mesh(new THREE.BoxGeometry(1.36, 0.035, 0.03), trimMaterial)
+    crossbar.position.set(x, 2.98, -roomDepth / 2 + 0.09)
+    scene.add(crossbar)
+
+    const glow = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: warmGlowTexture(),
+        color: '#9db1d4',
+        transparent: true,
+        opacity: 0.3,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    )
+    glow.position.set(x, 2.9, -roomDepth / 2 + 0.4)
+    glow.scale.set(2.4, 1.5, 1)
+    scene.add(glow)
+  }
+
+  // A rolling ladder leans against the north wall beside the bays.
+  const ladder = new THREE.Group()
+  for (const x of [-0.28, 0.28]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.06, 2.75, 0.06), wood)
+    rail.position.set(x, 1.35, 0)
+    rail.castShadow = true
+    ladder.add(rail)
+  }
+  for (let rung = 0; rung < 8; rung += 1) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.035, 0.035), wood)
+    bar.position.set(0, 0.28 + rung * 0.32, 0)
+    ladder.add(bar)
+  }
+  const hook = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.018, 8, 14, Math.PI), brassMaterial)
+  hook.position.set(0, 2.73, 0)
+  ladder.add(hook)
+  ladder.position.set(3.95, 0, -roomDepth / 2 + 0.36)
+  ladder.rotation.x = -0.1
+  ladder.rotation.z = 0.02
+  scene.add(ladder)
+
+  // Gramophone on a side table near the desk.
+  const gramophone = new THREE.Group()
+  const table = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.06, 0.5), wood)
+  table.position.y = 0.72
+  table.castShadow = true
+  gramophone.add(table)
+  for (const x of [-0.28, 0.28]) {
+    for (const z of [-0.18, 0.18]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.72, 0.05), woodDark)
+      leg.position.set(x, 0.36, z)
+      gramophone.add(leg)
+    }
+  }
+  const gramoBase = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.1, 0.28), woodDark)
+  gramoBase.position.y = 0.8
+  gramophone.add(gramoBase)
+  const platter = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.13, 0.13, 0.015, 24),
+    new THREE.MeshStandardMaterial({ color: '#141210', roughness: 0.6 })
+  )
+  platter.position.y = 0.86
+  gramophone.add(platter)
+  const horn = new THREE.Mesh(
+    new THREE.ConeGeometry(0.26, 0.46, 22, 1, true),
+    new THREE.MeshStandardMaterial({
+      color: '#8a6a35',
+      roughness: 0.42,
+      metalness: 0.55,
+      side: THREE.DoubleSide
+    })
+  )
+  horn.position.set(0.02, 1.18, -0.02)
+  horn.rotation.set(0.55, 0, 0.35)
+  horn.castShadow = true
+  gramophone.add(horn)
+  const crank = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.2, 8), brassMaterial)
+  crank.position.set(0.2, 0.86, 0.16)
+  crank.rotation.z = Math.PI / 2
+  gramophone.add(crank)
+  gramophone.position.set(-2.35, 0, 1.8)
+  scene.add(gramophone)
 
   const sectionWalls = new Map<Wall, Section[]>()
   for (const section of room.sections) {
@@ -427,6 +628,20 @@ function buildScene(
   lampLight.castShadow = false
   desk.add(lampLight)
 
+  const lampGlow = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: warmGlowTexture(),
+      color: '#ffc179',
+      transparent: true,
+      opacity: 0.62,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  )
+  lampGlow.position.set(0.75, 1.36, -0.25)
+  lampGlow.scale.set(1.5, 1.5, 1)
+  desk.add(lampGlow)
+
   const openBook = new THREE.Mesh(
     new THREE.BoxGeometry(0.46, 0.02, 0.32),
     new THREE.MeshStandardMaterial({ color: '#d9c9a3', roughness: 0.9 })
@@ -436,6 +651,20 @@ function buildScene(
   desk.add(openBook)
 
   scene.add(desk)
+
+  const deskShadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(3.3, 2.0),
+    new THREE.MeshBasicMaterial({
+      map: contactShadowTexture(),
+      transparent: true,
+      opacity: 0.65,
+      depthWrite: false
+    })
+  )
+  deskShadow.rotation.x = -Math.PI / 2
+  deskShadow.position.set(0, 0.009, 0.1)
+  deskShadow.renderOrder = 1
+  scene.add(deskShadow)
 
   const inbox = books.filter((book) => book.shelfId === null).slice(0, 4)
   inbox.forEach((book, index) => {
@@ -449,7 +678,34 @@ function buildScene(
     scene.add(stack)
   })
 
-  return { group: scene, anchors, placements, bookMesh, texture }
+  // Dust motes catch the lamp light and give the air some depth.
+  let dust: THREE.Points | null = null
+  if (quality !== 'low') {
+    const count = quality === 'high' ? 320 : 190
+    const positions = new Float32Array(count * 3)
+    for (let index = 0; index < count; index += 1) {
+      positions[index * 3] = (Math.random() - 0.5) * (roomWidth - 0.6)
+      positions[index * 3 + 1] = Math.random() * (wallHeight - 0.3) + 0.15
+      positions[index * 3 + 2] = (Math.random() - 0.5) * (roomDepth - 0.6)
+    }
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    dust = new THREE.Points(
+      geometry,
+      new THREE.PointsMaterial({
+        color: '#f0dfb9',
+        size: quality === 'high' ? 0.016 : 0.012,
+        transparent: true,
+        opacity: 0.34,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        sizeAttenuation: true
+      })
+    )
+    scene.add(dust)
+  }
+
+  return { group: scene, anchors, placements, bookMesh, texture, dust }
 }
 
 function qualitySettings(quality: string): { pixelRatio: number; shadows: boolean; shadowMap: number } {
@@ -652,7 +908,7 @@ export function RoomView({ library }: Props) {
     fill.position.set(-3.2, 2.8, 1.8)
     scene.add(fill)
 
-    const built = buildScene(room, roomBooks)
+    const built = buildScene(room, roomBooks, quality)
     scene.add(built.group)
     if (built.bookMesh) {
       built.bookMesh.userData.bookIds = built.placements.map((placement) => placement.book.id)
@@ -719,6 +975,20 @@ export function RoomView({ library }: Props) {
         targetTo: anchor.target.clone(),
         start: performance.now(),
         duration: 850
+      }
+      controls.enabled = false
+    }
+
+    // Enter the hall from the doorway, then settle into the reading position.
+    if (!reducedMotion) {
+      camera.position.set(0, 3.1, 8.4)
+      travel = {
+        from: camera.position.clone(),
+        to: new THREE.Vector3(0, 2.35, 6.1),
+        targetFrom: new THREE.Vector3(0, 1.55, 0),
+        targetTo: new THREE.Vector3(0, 1.25, 0),
+        start: performance.now(),
+        duration: 1100
       }
       controls.enabled = false
     }
@@ -850,6 +1120,36 @@ export function RoomView({ library }: Props) {
     renderer.domElement.addEventListener('pointermove', onPointerMove)
     renderer.domElement.addEventListener('click', onClick)
 
+    // Arrow keys walk the shelves, so the room is usable without a mouse.
+    const shelfIds = [...built.anchors.keys()].sort((a, b) => a - b)
+    let shelfCursor = -1
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const target = event.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')
+      ) {
+        return
+      }
+      if (event.key === 'Escape') {
+        openShelf(null)
+        return
+      }
+      if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
+      if (shelfIds.length === 0) return
+      event.preventDefault()
+      shelfCursor =
+        event.key === 'ArrowRight'
+          ? (shelfCursor + 1) % shelfIds.length
+          : (shelfCursor - 1 + shelfIds.length) % shelfIds.length
+      const shelfId = shelfIds[shelfCursor]
+      if (shelfId === undefined) return
+      playSound('tick')
+      openShelf(shelfId)
+      flyTo(shelfId)
+    }
+    window.addEventListener('keydown', onKeyDown)
+
     const resize = (): void => {
       const width = mount.clientWidth
       const height = mount.clientHeight
@@ -927,6 +1227,11 @@ export function RoomView({ library }: Props) {
         }
       }
 
+      if (built.dust) {
+        built.dust.rotation.y += 0.00045
+        built.dust.position.y = Math.sin(now / 5200) * 0.06
+      }
+
       renderer.render(scene, camera)
 
       frames += 1
@@ -956,6 +1261,7 @@ export function RoomView({ library }: Props) {
       if (navigateTimer) clearTimeout(navigateTimer)
       renderer.domElement.removeEventListener('pointermove', onPointerMove)
       renderer.domElement.removeEventListener('click', onClick)
+      window.removeEventListener('keydown', onKeyDown)
       controls.dispose()
       const shared = new Set<THREE.Material>([
         wood,
@@ -965,12 +1271,14 @@ export function RoomView({ library }: Props) {
         brassMaterial
       ])
       scene.traverse((object) => {
-        if (object instanceof THREE.Mesh) {
+        if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
           object.geometry.dispose()
-          const materials = Array.isArray(object.material) ? object.material : [object.material]
-          for (const material of materials) {
-            if (!shared.has(material)) material.dispose()
-          }
+        }
+        const material = (object as { material?: THREE.Material | THREE.Material[] }).material
+        if (!material) return
+        const materials = Array.isArray(material) ? material : [material]
+        for (const entry of materials) {
+          if (!shared.has(entry)) entry.dispose()
         }
       })
       built.texture.dispose()
@@ -1003,6 +1311,11 @@ export function RoomView({ library }: Props) {
   return (
     <div className="room room--scene">
       <div className="room__canvas" ref={mountRef} />
+      <div
+        key={room?.id ?? 'room'}
+        className={reducedMotion ? 'room__fade' : 'room__fade room__fade--animate'}
+        aria-hidden="true"
+      />
 
       <div className="room__hud">
         <p className="eyebrow">
@@ -1077,7 +1390,9 @@ export function RoomView({ library }: Props) {
         ) : null}
       </div>
 
-      <p className="room__hint">Drag to look around · click a book to read · click a shelf to browse</p>
+      <p className="room__hint">
+        Drag to look · click a book to read · ← → to walk the shelves · Esc to close
+      </p>
 
       {hovered ? <div className="room__tooltip">{hovered}</div> : null}
 

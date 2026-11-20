@@ -1,5 +1,6 @@
 import type { Annotation, Book, InkPoint, NormalizedRect, ReaderSettings } from '@shared/types'
 import * as pdfjs from 'pdfjs-dist'
+import { createPortal } from 'react-dom'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 import {
@@ -10,6 +11,14 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent
 } from 'react'
+import {
+  annotationPages as groupAnnotationPages,
+  inkPath,
+  inkWidth,
+  normalizedRect,
+  spreadStart,
+  stepMatch
+} from '../reader/layout'
 import { navigate } from '../router'
 import { playSound } from '../sound'
 import { recallLastBook, useReaderStore } from '../state/reader-store'
@@ -46,20 +55,6 @@ function readSettings(book: Book | null): ReaderSettings {
   }
 }
 
-function normalizedRect(rect: DOMRect, frame: DOMRect): NormalizedRect | null {
-  const left = Math.max(rect.left, frame.left)
-  const top = Math.max(rect.top, frame.top)
-  const right = Math.min(rect.right, frame.right)
-  const bottom = Math.min(rect.bottom, frame.bottom)
-  if (right - left < 1 || bottom - top < 1) return null
-  return {
-    x: (left - frame.left) / frame.width,
-    y: (top - frame.top) / frame.height,
-    w: (right - left) / frame.width,
-    h: (bottom - top) / frame.height
-  }
-}
-
 interface PageProps {
   pdf: PDFDocumentProxy
   number: number
@@ -69,9 +64,11 @@ interface PageProps {
   zoom: number
   rotation: number
   annotations: Annotation[]
-  tool: 'select' | 'highlight' | 'ink'
-  onHighlight: (page: number, rects: NormalizedRect[]) => void
+  tool: 'select' | 'highlight' | 'ink' | 'erase'
+  color: string
+  onHighlight: (page: number, rects: NormalizedRect[], color: string) => void
   onInk: (page: number, stroke: InkPoint[]) => void
+  onErase: (annotation: Annotation) => void
   onOpenAnnotation: (annotation: Annotation) => void
   settings: ReaderSettings
   searchQuery: string
@@ -87,8 +84,10 @@ function PdfPage({
   rotation,
   annotations,
   tool,
+  color,
   onHighlight,
   onInk,
+  onErase,
   onOpenAnnotation,
   settings,
   searchQuery
@@ -98,6 +97,12 @@ function PdfPage({
   const textRef = useRef<HTMLDivElement | null>(null)
   const [scale, setScale] = useState(1)
   const [draftStroke, setDraftStroke] = useState<InkPoint[] | null>(null)
+  const [menu, setMenu] = useState<{
+    left: number
+    top: number
+    text: string
+    rects: NormalizedRect[]
+  } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -176,18 +181,14 @@ function PdfPage({
     }
   }, [pdf, number, containerWidth, containerHeight, fit, zoom, rotation, settings.theme, searchQuery])
 
-  const finishSelection = useCallback(() => {
-    if (tool !== 'highlight') return
-    const host = hostRef.current
+  const selectionRects = useCallback((): NormalizedRect[] => {
     const canvas = canvasRef.current
-    if (!host || !canvas) return
-
+    if (!canvas) return []
     const selection = window.getSelection()
-    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return []
 
     const frame = canvas.getBoundingClientRect()
     const rects: NormalizedRect[] = []
-
     for (let index = 0; index < selection.rangeCount; index += 1) {
       const range = selection.getRangeAt(index)
       for (const rect of Array.from(range.getClientRects())) {
@@ -195,10 +196,48 @@ function PdfPage({
         if (normalized) rects.push(normalized)
       }
     }
+    return rects
+  }, [])
 
-    if (rects.length > 0) onHighlight(number, rects)
-    selection.removeAllRanges()
-  }, [tool, number, onHighlight])
+  const clearSelection = (): void => {
+    window.getSelection()?.removeAllRanges()
+    setMenu(null)
+  }
+
+  const finishSelection = useCallback(() => {
+    if (tool !== 'highlight') return
+    const rects = selectionRects()
+    if (rects.length > 0) onHighlight(number, rects, color)
+    clearSelection()
+  }, [tool, number, color, onHighlight, selectionRects])
+
+  const openSelectionMenu = (): void => {
+    if (tool !== 'select') {
+      setMenu(null)
+      return
+    }
+    const selection = window.getSelection()
+    if (!selection || selection.isCollapsed || selection.toString().trim().length === 0) {
+      setMenu(null)
+      return
+    }
+    const rect = selection.getRangeAt(0).getBoundingClientRect()
+    if (rect.width === 0 && rect.height === 0) {
+      setMenu(null)
+      return
+    }
+    const rects = selectionRects()
+    if (rects.length === 0) {
+      setMenu(null)
+      return
+    }
+    setMenu({
+      left: Math.max(24, Math.min(window.innerWidth - 24, rect.left + rect.width / 2)),
+      top: Math.max(16, rect.top - 6),
+      text: selection.toString().trim(),
+      rects
+    })
+  }
 
   const inkPoint = (event: ReactPointerEvent<SVGSVGElement>): InkPoint | null => {
     const host = hostRef.current
@@ -233,17 +272,12 @@ function PdfPage({
     onInk(number, stroke)
   }
 
-  const path = (points: InkPoint[]): string =>
-    points
-      .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x * 100} ${point.y * 100}`)
-      .join(' ')
-
   return (
     <div
       className="pdf-page"
       ref={hostRef}
       data-page={number}
-      onMouseUp={finishSelection}
+      onMouseUp={tool === 'highlight' ? finishSelection : openSelectionMenu}
       style={{ width: 'fit-content' }}
     >
       <canvas ref={canvasRef} className="pdf-page__canvas" />
@@ -271,9 +305,12 @@ function PdfPage({
 
       {annotations.some((annotation) => annotation.type === 'ink') ||
       draftStroke ||
-      tool === 'ink' ? (
+      tool === 'ink' ||
+      tool === 'erase' ? (
         <svg
-          className={`pdf-page__ink ${tool === 'ink' ? 'pdf-page__ink--active' : ''}`}
+          className={`pdf-page__ink ${tool === 'ink' ? 'pdf-page__ink--active' : ''} ${
+            tool === 'erase' ? 'pdf-page__ink--erasing' : ''
+          }`}
           viewBox="0 0 100 100"
           preserveAspectRatio="none"
           onPointerDown={startStroke}
@@ -287,21 +324,23 @@ function PdfPage({
               annotation.strokes.map((stroke, index) => (
                 <path
                   key={`${annotation.id}-${index}`}
-                  d={path(stroke)}
+                  className="pdf-page__stroke"
+                  d={inkPath(stroke)}
                   fill="none"
                   stroke={annotation.color ?? '#c9a227'}
-                  strokeWidth={0.7}
+                  strokeWidth={inkWidth(stroke)}
                   strokeLinecap="round"
                   strokeLinejoin="round"
+                  onClick={() => (tool === 'erase' ? onErase(annotation) : onOpenAnnotation(annotation))}
                 />
               ))
             )}
           {draftStroke ? (
             <path
-              d={path(draftStroke)}
+              d={inkPath(draftStroke)}
               fill="none"
-              stroke="#c9a227"
-              strokeWidth={0.7}
+              stroke={color}
+              strokeWidth={inkWidth(draftStroke)}
               strokeLinecap="round"
             />
           ) : null}
@@ -330,6 +369,45 @@ function PdfPage({
       <span className="pdf-page__scale" aria-hidden="true">
         {Math.round(scale * 100)}%
       </span>
+
+      {menu
+        ? createPortal(
+            <div
+              className="selection-toolbar"
+              style={{ left: menu.left, top: menu.top }}
+              role="toolbar"
+              aria-label="Selection actions"
+              onMouseUp={(event) => event.stopPropagation()}
+            >
+          <button
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              void navigator.clipboard.writeText(menu.text).catch(() => undefined)
+              clearSelection()
+            }}
+          >
+            Copy
+          </button>
+              <span className="selection-toolbar__label">Highlight</span>
+              {highlightColors.map((swatch) => (
+                <button
+                  key={swatch}
+                  type="button"
+                  className="swatch"
+                  style={{ background: swatch }}
+                  aria-label={`Highlight in ${swatch}`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    if (menu.rects.length > 0) onHighlight(number, menu.rects, swatch)
+                    clearSelection()
+                  }}
+                />
+              ))}
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   )
 }
@@ -361,6 +439,55 @@ function OutlineTree({
   )
 }
 
+function PageThumb({
+  pdf,
+  number,
+  active,
+  onGo
+}: {
+  pdf: PDFDocumentProxy
+  number: number
+  active: boolean
+  onGo: (page: number) => void
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const render = async (): Promise<void> => {
+      const page = await pdf.getPage(number)
+      if (cancelled) return
+      const base = page.getViewport({ scale: 1 })
+      const viewport = page.getViewport({ scale: 118 / base.width })
+      const canvas = canvasRef.current
+      if (!canvas) return
+      canvas.width = Math.floor(viewport.width)
+      canvas.height = Math.floor(viewport.height)
+      const context = canvas.getContext('2d')
+      if (!context) return
+      context.fillStyle = '#ffffff'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      await page.render({ canvasContext: context, viewport, canvas }).promise
+    }
+    void render().catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [pdf, number])
+
+  return (
+    <button
+      type="button"
+      className={`thumb ${active ? 'thumb--on' : ''}`}
+      aria-current={active ? 'page' : undefined}
+      onClick={() => onGo(number)}
+    >
+      <canvas ref={canvasRef} />
+      <span>p. {number}</span>
+    </button>
+  )
+}
+
 export function ReaderView() {
   const storeBookId = useReaderStore((state) => state.bookId)
   const requestedPage = useReaderStore((state) => state.page)
@@ -383,13 +510,18 @@ export function ReaderView() {
   const [password, setPassword] = useState('')
   const [unlocking, setUnlocking] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
-  const [tool, setTool] = useState<'select' | 'highlight' | 'ink'>('select')
+  const [tool, setTool] = useState<'select' | 'highlight' | 'ink' | 'erase'>('select')
   const [color, setColor] = useState(highlightColors[0])
-  const [tab, setTab] = useState<'outline' | 'search' | 'notes'>('outline')
+  const [tab, setTab] = useState<'outline' | 'search' | 'notes' | 'thumbs'>('outline')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [search, setSearch] = useState('')
   const [results, setResults] = useState<Array<{ page: number; snippet: string }>>([])
+  const [resultIndex, setResultIndex] = useState(0)
+  const [searchedFor, setSearchedFor] = useState('')
   const [searching, setSearching] = useState(false)
+  const [redoInk, setRedoInk] = useState<Annotation[]>([])
+  const [annotationFilter, setAnnotationFilter] = useState<'all' | Annotation['type']>('all')
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [noteDraft, setNoteDraft] = useState<{ annotation: Annotation | null; text: string } | null>(
     null
   )
@@ -400,6 +532,12 @@ export function ReaderView() {
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const programmaticScroll = useRef(false)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+
+  const setSidebar = (open: boolean): void => {
+    setSidebarOpen(open)
+    setSettings((current) => ({ ...current, sidebar: open }))
+  }
 
   useEffect(() => {
     if (storeBookId === null) {
@@ -433,7 +571,9 @@ export function ReaderView() {
         setBook(loaded)
         setSelectedBook(loaded)
         setPinned(loaded.deskPinned)
-        setSettings(readSettings(loaded))
+        const nextSettings = readSettings(loaded)
+        setSettings(nextSettings)
+        setSidebarOpen(nextSettings.sidebar)
 
         if (loaded.encrypted && !loaded.unlockedAt) {
           setNeedsUnlock(true)
@@ -584,14 +724,20 @@ export function ReaderView() {
     [pageCount, settings.mode, storePage]
   )
 
+  const isSpread = settings.spread && settings.mode === 'page' && containerSize.width >= 760
+  const spreadPage = isSpread ? spreadStart(page, pageCount) : page
+  const spreadPagesToRender = isSpread
+    ? [spreadPage, spreadPage + 1].filter((number) => number <= pageCount)
+    : [page]
+
   const nextPage = useCallback(() => {
     playSound('page')
-    goToPage(page + 1)
-  }, [goToPage, page])
+    goToPage(page + (isSpread ? 2 : 1))
+  }, [goToPage, page, isSpread])
   const previousPage = useCallback(() => {
     playSound('page')
-    goToPage(page - 1)
-  }, [goToPage, page])
+    goToPage(page - (isSpread ? 2 : 1))
+  }, [goToPage, page, isSpread])
 
   const onScroll = (): void => {
     if (settings.mode !== 'continuous' || programmaticScroll.current || !scrollRef.current) return
@@ -609,13 +755,17 @@ export function ReaderView() {
     setAnnotations(await window.alexandria.listAnnotations(book.id))
   }
 
-  const addHighlight = async (targetPage: number, rects: NormalizedRect[]): Promise<void> => {
+  const addHighlight = async (
+    targetPage: number,
+    rects: NormalizedRect[],
+    highlight: string
+  ): Promise<void> => {
     if (!book) return
     await window.alexandria.createAnnotation({
       bookId: book.id,
       page: targetPage,
       type: 'highlight',
-      color,
+      color: highlight,
       rects
     })
     await refreshAnnotations()
@@ -677,9 +827,47 @@ export function ReaderView() {
     await refreshAnnotations()
   }
 
+  const undoInk = async (): Promise<void> => {
+    if (!book) return
+    const pageInk = annotations.filter(
+      (annotation) => annotation.type === 'ink' && annotation.page === page
+    )
+    const last = pageInk[pageInk.length - 1]
+    if (!last) return
+    setRedoInk((current) => [...current, last])
+    await deleteAnnotation(last.id)
+  }
+
+  const redoInkStroke = async (): Promise<void> => {
+    if (!book || redoInk.length === 0) return
+    const last = redoInk[redoInk.length - 1]
+    if (!last) return
+    setRedoInk((current) => current.slice(0, -1))
+    await window.alexandria.createAnnotation({
+      bookId: book.id,
+      page: last.page,
+      type: 'ink',
+      color: last.color,
+      strokes: last.strokes
+    })
+    await refreshAnnotations()
+  }
+
+  const goToResult = (index: number): void => {
+    const hit = results[index]
+    if (!hit) return
+    setResultIndex(index)
+    goToPage(hit.page, true)
+  }
+
+  const stepResult = (direction: 1 | -1): void => {
+    if (results.length === 0) return
+    goToResult(stepMatch(resultIndex, results.length, direction))
+  }
+
   const openAnnotation = (annotation: Annotation): void => {
     setTab('notes')
-    setSidebarOpen(true)
+    setSidebar(true)
     setNoteDraft({ annotation, text: annotation.note ?? '' })
   }
 
@@ -691,10 +879,31 @@ export function ReaderView() {
     setSearching(true)
     try {
       const hits = await window.alexandria.searchInBook(book.id, search.trim())
-      setResults(hits.map((hit) => ({ page: hit.page, snippet: hit.snippet })))
+      const mapped = hits.map((hit) => ({ page: hit.page, snippet: hit.snippet }))
+      setResults(mapped)
+      setSearchedFor(search.trim())
+      setResultIndex(0)
+      const first = mapped[0]
+      if (first) goToPage(first.page, true)
     } finally {
       setSearching(false)
     }
+  }
+
+  const resizeSidebar = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = settings.sidebarWidth
+    const onMove = (move: PointerEvent): void => {
+      const width = Math.min(560, Math.max(240, startWidth + (startX - move.clientX)))
+      setSettings((current) => ({ ...current, sidebarWidth: width }))
+    }
+    const onUp = (): void => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
   }
 
   const unlock = async (): Promise<void> => {
@@ -747,6 +956,26 @@ export function ReaderView() {
         return
       }
 
+      const command = event.ctrlKey || event.metaKey
+      if (command && event.key.toLowerCase() === 'f') {
+        event.preventDefault()
+        setTab('search')
+        setSidebar(true)
+        requestAnimationFrame(() => searchInputRef.current?.focus())
+        return
+      }
+      if (command && event.key.toLowerCase() === 'z') {
+        event.preventDefault()
+        if (event.shiftKey) void redoInkStroke()
+        else void undoInk()
+        return
+      }
+      if (event.key === '?') {
+        event.preventDefault()
+        setShortcutsOpen((current) => !current)
+        return
+      }
+
       switch (event.key) {
         case 'ArrowRight':
         case 'PageDown':
@@ -789,9 +1018,16 @@ export function ReaderView() {
         case 'i':
           setTool('ink')
           break
+        case 'e':
+          setTool('erase')
+          break
+        case 's':
+          setSettings((current) => ({ ...current, mode: 'page', spread: !current.spread }))
+          break
         case 'Escape':
-          setSidebarOpen(false)
+          setSidebar(false)
           setNoteDraft(null)
+          setShortcutsOpen(false)
           break
         default:
           break
@@ -811,6 +1047,8 @@ export function ReaderView() {
 
   const pageAnnotations = (target: number): Annotation[] =>
     annotations.filter((annotation) => annotation.page === target)
+
+  const annotationPages = groupAnnotationPages(annotations, annotationFilter)
 
   if (!storeBookId) {
     return (
@@ -956,6 +1194,34 @@ export function ReaderView() {
           >
             ✒
           </button>
+          <button
+            className={`tool ${tool === 'erase' ? 'tool--on' : ''}`}
+            type="button"
+            title="Erase a stroke (E)"
+            aria-label="Erase a stroke"
+            onClick={() => setTool(tool === 'erase' ? 'select' : 'erase')}
+          >
+            ⌫
+          </button>
+          <button
+            className="tool"
+            type="button"
+            title="Undo ink (Ctrl/Cmd + Z)"
+            aria-label="Undo ink"
+            onClick={() => void undoInk()}
+          >
+            ↺
+          </button>
+          <button
+            className="tool"
+            type="button"
+            title="Redo ink (Ctrl/Cmd + Shift + Z)"
+            aria-label="Redo ink"
+            disabled={redoInk.length === 0}
+            onClick={() => void redoInkStroke()}
+          >
+            ↻
+          </button>
           <div className="reader__colors" aria-label="Annotation colour">
             {highlightColors.map((swatch) => (
               <button
@@ -982,7 +1248,7 @@ export function ReaderView() {
             title="Search inside"
             onClick={() => {
               setTab('search')
-              setSidebarOpen(true)
+              setSidebar(true)
             }}
           >
             ⌕
@@ -993,7 +1259,7 @@ export function ReaderView() {
             title="Outline"
             onClick={() => {
               setTab('outline')
-              setSidebarOpen(!sidebarOpen || tab !== 'outline')
+              setSidebar(!sidebarOpen || tab !== 'outline')
             }}
           >
             ☰
@@ -1083,6 +1349,31 @@ export function ReaderView() {
           >
             {settings.mode === 'page' ? '⇕' : '▭'}
           </button>
+          <button
+            className={`tool ${settings.spread ? 'tool--on' : ''}`}
+            type="button"
+            title="Two-page spread (S)"
+            aria-label="Two-page spread"
+            aria-pressed={settings.spread}
+            onClick={() =>
+              setSettings((current) => ({
+                ...current,
+                spread: !current.spread,
+                mode: 'page'
+              }))
+            }
+          >
+            ▥
+          </button>
+          <button
+            className="tool"
+            type="button"
+            title="Keyboard shortcuts (?)"
+            aria-label="Keyboard shortcuts"
+            onClick={() => setShortcutsOpen(true)}
+          >
+            ?
+          </button>
           <button className="tool" type="button" title="Full screen (F)" onClick={() => void toggleFullscreen()}>
             {inFullscreen ? '⤡' : '⛶'}
           </button>
@@ -1094,22 +1385,29 @@ export function ReaderView() {
           {loading ? <div className="reader__loading">Opening the volume…</div> : null}
 
           {pdf && settings.mode === 'page' ? (
-            <PdfPage
-              pdf={pdf}
-              number={page}
-              containerWidth={containerSize.width}
-              containerHeight={containerSize.height}
-              fit={settings.fit}
-              zoom={settings.zoom}
-              rotation={settings.rotation}
-              annotations={pageAnnotations(page)}
-              tool={tool}
-              onHighlight={(target, rects) => void addHighlight(target, rects)}
-              onInk={(target, strokes) => void addInk(target, strokes)}
-              onOpenAnnotation={openAnnotation}
-              settings={settings}
-              searchQuery={search}
-            />
+            <div className={isSpread ? 'reader__spread' : undefined}>
+              {spreadPagesToRender.map((number) => (
+                <PdfPage
+                  key={number}
+                  pdf={pdf}
+                  number={number}
+                  containerWidth={isSpread ? containerSize.width / 2 : containerSize.width}
+                  containerHeight={containerSize.height}
+                  fit={settings.fit}
+                  zoom={settings.zoom}
+                  rotation={settings.rotation}
+                  annotations={pageAnnotations(number)}
+                  tool={tool}
+                  color={color}
+                  onHighlight={(target, rects, swatch) => void addHighlight(target, rects, swatch)}
+                  onInk={(target, strokes) => void addInk(target, strokes)}
+                  onErase={(annotation) => void deleteAnnotation(annotation.id)}
+                  onOpenAnnotation={openAnnotation}
+                  settings={settings}
+                  searchQuery={search}
+                />
+              ))}
+            </div>
           ) : null}
 
           {pdf && settings.mode === 'continuous' ? (
@@ -1131,8 +1429,10 @@ export function ReaderView() {
                   rotation={settings.rotation}
                   annotations={pageAnnotations(number)}
                   tool={tool}
-                  onHighlight={(target, rects) => void addHighlight(target, rects)}
+                  color={color}
+                  onHighlight={(target, rects, swatch) => void addHighlight(target, rects, swatch)}
                   onInk={(target, strokes) => void addInk(target, strokes)}
+                  onErase={(annotation) => void deleteAnnotation(annotation.id)}
                   onOpenAnnotation={openAnnotation}
                   settings={settings}
                   searchQuery={search}
@@ -1155,9 +1455,16 @@ export function ReaderView() {
         </div>
 
         {sidebarOpen ? (
-          <aside className="reader__sidebar">
+          <aside className="reader__sidebar" style={{ width: settings.sidebarWidth }}>
+            <div
+              className="reader__resize"
+              role="separator"
+              aria-label="Resize panel"
+              aria-orientation="vertical"
+              onPointerDown={resizeSidebar}
+            />
             <div className="reader__tabs" role="tablist" aria-label="Reader panels">
-              {(['outline', 'search', 'notes'] as const).map((value) => (
+              {(['outline', 'search', 'notes', 'thumbs'] as const).map((value) => (
                 <button
                   key={value}
                   type="button"
@@ -1166,14 +1473,20 @@ export function ReaderView() {
                   className="reader__tab"
                   onClick={() => setTab(value)}
                 >
-                  {value === 'outline' ? 'Contents' : value === 'search' ? 'Search' : 'Notes'}
+                  {value === 'outline'
+                    ? 'Contents'
+                    : value === 'search'
+                      ? 'Search'
+                      : value === 'notes'
+                        ? 'Notes'
+                        : 'Pages'}
                 </button>
               ))}
               <button
                 className="icon-button reader__sidebar-close"
                 type="button"
                 aria-label="Close panel"
-                onClick={() => setSidebarOpen(false)}
+                onClick={() => setSidebar(false)}
               >
                 ×
               </button>
@@ -1226,28 +1539,56 @@ export function ReaderView() {
                   className="reader__search"
                   onSubmit={(event) => {
                     event.preventDefault()
-                    void runSearch()
+                    if (results.length > 0 && search.trim() === searchedFor) stepResult(1)
+                    else void runSearch()
                   }}
                 >
                   <input
+                    ref={searchInputRef}
                     type="search"
                     value={search}
                     placeholder="Search this volume…"
                     onChange={(event) => setSearch(event.target.value)}
                   />
                   <button className="button button--quiet" type="submit" disabled={searching}>
-                    {searching ? '…' : 'Find'}
+                    {searching ? '…' : results.length > 0 && search.trim() === searchedFor ? 'Next' : 'Find'}
                   </button>
                 </form>
-                <p className="reader__muted">
-                  {search.trim().length < 2
-                    ? 'Type at least two characters.'
-                    : `${results.length} ${results.length === 1 ? 'match' : 'matches'}`}
-                </p>
+                <div className="search-stepper">
+                  <button
+                    className="icon-button"
+                    type="button"
+                    aria-label="Previous match"
+                    disabled={results.length === 0}
+                    onClick={() => stepResult(-1)}
+                  >
+                    ‹
+                  </button>
+                  <span>
+                    {search.trim().length < 2
+                      ? 'Type at least two characters.'
+                      : results.length === 0
+                        ? 'No matches in this volume.'
+                        : `${resultIndex + 1} of ${results.length} ${results.length === 1 ? 'match' : 'matches'}`}
+                  </span>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    aria-label="Next match"
+                    disabled={results.length === 0}
+                    onClick={() => stepResult(1)}
+                  >
+                    ›
+                  </button>
+                </div>
                 <ul className="search-results">
-                  {results.map((result) => (
-                    <li key={`${result.page}-${result.snippet.slice(0, 12)}`}>
-                      <button type="button" onClick={() => goToPage(result.page, true)}>
+                  {results.map((result, index) => (
+                    <li key={`${result.page}-${result.snippet.slice(0, 12)}-${index}`}>
+                      <button
+                        type="button"
+                        className={index === resultIndex ? 'search-results__hit--active' : undefined}
+                        onClick={() => goToResult(index)}
+                      >
                         <span className="search-results__page">p. {result.page}</span>
                         <span className="search-results__snippet">{result.snippet}</span>
                       </button>
@@ -1278,50 +1619,118 @@ export function ReaderView() {
                   </button>
                 </div>
 
+                <label className="field field--compact">
+                  <span>Show</span>
+                  <select
+                    aria-label="Filter annotations"
+                    value={annotationFilter}
+                    onChange={(event) =>
+                      setAnnotationFilter(event.target.value as 'all' | Annotation['type'])
+                    }
+                  >
+                    <option value="all">Everything</option>
+                    <option value="highlight">Highlights</option>
+                    <option value="note">Notes</option>
+                    <option value="ink">Ink</option>
+                    <option value="bookmark">Bookmarks</option>
+                  </select>
+                </label>
+
                 {annotations.length === 0 ? (
                   <p className="reader__muted">No notes, highlights, or bookmarks yet.</p>
                 ) : (
-                  <ul className="annotation-list">
-                    {annotations.map((annotation) => (
-                      <li key={annotation.id} className="annotation-item">
+                  annotationPages.map((groupPage) => {
+                    const group = annotations.filter(
+                      (annotation) =>
+                        annotation.page === groupPage &&
+                        (annotationFilter === 'all' || annotation.type === annotationFilter)
+                    )
+                    if (group.length === 0) return null
+                    return (
+                      <section key={groupPage} className="annotation-group">
+                        <h3 className="annotation-group__head">Page {groupPage}</h3>
+                        <ul className="annotation-list">
+                          {group.map((annotation) => (
+                            <li key={annotation.id} className="annotation-item">
+                              <button
+                                type="button"
+                                className="annotation-item__main"
+                                onClick={() => goToPage(annotation.page, true)}
+                              >
+                                <span className="annotation-item__kicker">
+                                  p. {annotation.page} · {annotation.type}
+                                </span>
+                                <span className="annotation-item__text">
+                                  {annotation.note ??
+                                    (annotation.type === 'highlight'
+                                      ? `${annotation.rects.length} highlighted ${annotation.rects.length === 1 ? 'passage' : 'passages'}`
+                                      : annotation.type === 'ink'
+                                        ? 'Handwritten annotation'
+                                        : 'Bookmark')}
+                                </span>
+                              </button>
+                              <div className="annotation-item__actions">
+                                {annotation.type !== 'bookmark' ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openAnnotation(annotation)}
+                                    title="Edit note"
+                                  >
+                                    Edit
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  onClick={() => void deleteAnnotation(annotation.id)}
+                                  title="Delete annotation"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    )
+                  })
+                )}
+
+                {annotations.length > 0 &&
+                annotations.every(
+                  (annotation) => annotationFilter !== 'all' && annotation.type !== annotationFilter
+                ) ? (
+                  <p className="reader__muted">Nothing of this kind yet.</p>
+                ) : null}
+              </div>
+            ) : null}
+
+            {tab === 'thumbs' ? (
+              <div className="reader__panel">
+                {pdf ? (
+                  <div className="thumbs">
+                    {Array.from({ length: pageCount }, (_, index) => index + 1).map((number) =>
+                      Math.abs(number - page) <= 16 ? (
+                        <PageThumb
+                          key={number}
+                          pdf={pdf}
+                          number={number}
+                          active={number === page}
+                          onGo={(target) => goToPage(target, true)}
+                        />
+                      ) : (
                         <button
+                          key={number}
                           type="button"
-                          className="annotation-item__main"
-                          onClick={() => goToPage(annotation.page, true)}
+                          className="thumb thumb--placeholder"
+                          onClick={() => goToPage(number, true)}
                         >
-                          <span className="annotation-item__kicker">
-                            p. {annotation.page} · {annotation.type}
-                          </span>
-                          <span className="annotation-item__text">
-                            {annotation.note ??
-                              (annotation.type === 'highlight'
-                                ? `${annotation.rects.length} highlighted ${annotation.rects.length === 1 ? 'passage' : 'passages'}`
-                                : annotation.type === 'ink'
-                                  ? 'Handwritten annotation'
-                                  : 'Bookmark')}
-                          </span>
+                          p. {number}
                         </button>
-                        <div className="annotation-item__actions">
-                          {annotation.type !== 'bookmark' ? (
-                            <button
-                              type="button"
-                              onClick={() => openAnnotation(annotation)}
-                              title="Edit note"
-                            >
-                              Edit
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            onClick={() => void deleteAnnotation(annotation.id)}
-                            title="Delete annotation"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
+                      )
+                    )}
+                  </div>
+                ) : (
+                  <p className="reader__muted">The pages appear once the volume opens.</p>
                 )}
               </div>
             ) : null}
@@ -1362,11 +1771,71 @@ export function ReaderView() {
         </div>
       ) : null}
 
+      {shortcutsOpen ? (
+        <div className="dialog-scrim" role="presentation" onClick={() => setShortcutsOpen(false)}>
+          <div
+            className="dialog dialog--wide shortcuts"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Reader shortcuts"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="settings__head">
+              <div>
+                <p className="eyebrow">Reader</p>
+                <h2 className="display">Shortcuts</h2>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Close shortcuts"
+                onClick={() => setShortcutsOpen(false)}
+              >
+                ×
+              </button>
+            </header>
+            <dl className="settings__shortcuts">
+              {[
+                ['← / →, PgUp / PgDn, Space', 'Turn pages'],
+                ['Home / End', 'First / last page'],
+                ['+ / −', 'Zoom in / out'],
+                ['F', 'Full screen'],
+                ['B', 'Bookmark this page'],
+                ['H', 'Highlight tool'],
+                ['I', 'Ink tool'],
+                ['E', 'Eraser'],
+                ['S', 'Two-page spread'],
+                ['Ctrl / Cmd + Z', 'Undo ink'],
+                ['Ctrl / Cmd + Shift + Z', 'Redo ink'],
+                ['Ctrl / Cmd + F', 'Search inside'],
+                ['?', 'This list'],
+                ['Esc', 'Close the panel']
+              ].map(([keys, action]) => (
+                <div key={keys}>
+                  <dt>
+                    <kbd>{keys}</kbd>
+                  </dt>
+                  <dd>{action}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </div>
+      ) : null}
+
       {loading ? <div className="reader__scrim" aria-hidden="true" /> : null}
 
       <footer className="reader__status">
         <span>{settings.mode === 'page' ? 'Single page' : 'Continuous'}</span>
-        <span>{tool === 'select' ? 'Select text' : tool === 'highlight' ? 'Highlight tool' : 'Ink tool'}</span>
+        <span>
+          {tool === 'select'
+            ? 'Select text'
+            : tool === 'highlight'
+              ? 'Highlight tool'
+              : tool === 'ink'
+                ? 'Ink tool'
+                : 'Eraser'}
+        </span>
         <span>{book?.pageCount ?? pageCount} pages</span>
       </footer>
     </div>

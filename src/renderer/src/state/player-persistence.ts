@@ -8,6 +8,7 @@ interface SavedPlayer {
   currentIndex: number
   volume: number
   collapsed: boolean
+  shuffle: boolean
 }
 
 function isTrack(value: unknown): value is MusicTrack {
@@ -37,7 +38,8 @@ export function restorePlayer(): void {
       tracks,
       currentIndex: index,
       volume,
-      collapsed: Boolean(saved.collapsed)
+      collapsed: Boolean(saved.collapsed),
+      shuffle: Boolean(saved.shuffle)
     })
   } catch {
     // A corrupt or absent snapshot just means a fresh player.
@@ -54,7 +56,8 @@ export function wirePlayerPersistence(): () => void {
         tracks: state.tracks,
         currentIndex: state.currentIndex,
         volume: state.volume,
-        collapsed: state.collapsed
+        collapsed: state.collapsed,
+        shuffle: state.shuffle
       }
       try {
         localStorage.setItem(key, JSON.stringify(saved))

@@ -40,6 +40,15 @@ process.on('unhandledRejection', (reason) => {
 
 ipcMain.handle(IPC.appPing, () => 'pong')
 
+ipcMain.handle(IPC.appInfo, () => ({
+  name: app.getName(),
+  version: app.getVersion(),
+  electron: process.versions.electron ?? '',
+  chrome: process.versions.chrome ?? '',
+  node: process.versions.node,
+  platform: `${process.platform} ${process.arch}`
+}))
+
 ipcMain.handle(IPC.libraryInfo, () => getLibraryInfo())
 
 ipcMain.handle(IPC.settingsGet, () => getAllSettings(getLibrary().db))

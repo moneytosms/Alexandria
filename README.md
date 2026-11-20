@@ -13,8 +13,8 @@ and a 2D plan, reads PDFs with highlights, notes, ink, and bookmarks, searches
 the whole library, and plays music from local folders. The remaining v1 work is
 tracked in [TODO.md](TODO.md); the design is in [SPEC.md](SPEC.md).
 
-Verified locally: `pnpm typecheck`, `pnpm build`, `pnpm test` (29 tests), and
-`pnpm test:e2e` (8 Electron tests) pass. Linux packaging config exists but has
+Verified locally: `pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm test`
+(43 tests), and `pnpm test:e2e` (10 Electron tests) pass. Linux packaging config exists but has
 not been checked on a clean machine.
 
 ## What works today

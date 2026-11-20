@@ -4,10 +4,10 @@ Last updated: 2026-11-21
 Spec: `./SPEC.md`
 Handoff: `./NEXT_STEPS.md`
 
-Status: M0 complete. M1–M3 substantially complete. M4 mostly done: the room
-batches, animates, and has a performance check. M5 and M6 are well started. The
-app runs, imports, reads, annotates, searches, plays music, and browses as a 3D
-room; it is not yet release-ready.
+Status: M0 complete. M1–M4 substantially complete; the room has its full shell,
+lighting, camera travel, and performance check. M5 is nearly done and M6 is in
+its hardening pass. The app runs, imports, reads, annotates, searches, plays
+music, and browses as a 3D room; it is not yet release-ready.
 
 ## How to work
 
@@ -25,9 +25,10 @@ A `[~]` task's unmet acceptance line is written next to it.
 
 ## Current focus
 
-`M4 Finish the room` — the remaining shell props, lighting passes, and camera
-travel between rooms. The batch, pull animation, reduced motion, and performance
-check are done.
+`M5/M6 Release hardening` — close the remaining partials that a user can see:
+music browse, encrypted and bad-PDF fixtures, packaging on a clean machine, the
+log viewer, and the release checklist. Reader, room, map, and index features are
+feature-complete for v1.
 
 ## Planning
 
@@ -56,16 +57,17 @@ check are done.
 - [x] **M1-02 Detect, hash, dedupe.** SHA-256, duplicate focus; covered by E2E.
 - [x] **M1-03 Copy or link.** `import.storage` setting; copies land in `books/`.
 - [x] **M1-04 PDF metadata.** pdfjs-dist title/author/page count with fallbacks.
-- [~] **M1-05 Cover and thumbnails.** Covers are generated; lazy 256px page
-  thumbnails and their cache are not implemented.
+- [~] **M1-05 Cover and thumbnails.** Covers are generated, and the reader's
+  Pages tab renders lazy page thumbnails. There is still no on-disk thumbnail
+  cache and covers have no PDF-page fallback.
 - [x] **M1-06 Text extraction.** Pages and `pages_fts` populated on import.
 - [x] **M1-07 Import queue.** Concurrency cap, progress events, cancel.
 - [x] **M1-08 Office conversion.** LibreOffice headless into `cache/`.
 - [~] **M1-09 Encrypted PDFs.** Locked import and unlock-on-open work; indexing
   after unlock and the password fixture still need a test.
 - [x] **M1-10 Placement and growth.** Append-only growth and undo.
-- [~] **M1-11 Index view.** Sortable table with metadata and filters; keyboard
-  row activation only, no arrow-key navigation.
+- [x] **M1-11 Index view.** Sortable table with metadata, filters, and
+  ArrowUp/ArrowDown row navigation.
 - [x] **M1-12 Basic reader open.**
 - [x] **M1-13 Missing files.** Scan, badge, relink.
 - [~] **M1-14 Fixtures and tests.** Generated text PDF and import/convert tests
@@ -75,29 +77,32 @@ check are done.
 
 - [~] **M2-01 Reader shell.** Full-screen open/close and progress restore; the
   saved anchor is page-level, and chrome does not auto-hide.
-- [~] **M2-02 Render modes.** Page, continuous, fit width/page, custom zoom,
-  rotate. Spread mode is missing.
+- [x] **M2-02 Render modes.** Page, continuous, fit width/page, custom zoom,
+  rotate, and a two-page spread that folds away on narrow viewports.
 - [x] **M2-03 Virtualization.** Visible pages ±2 with cleanup on unmount.
-- [~] **M2-04 Text layer and selection.** Selection with copy and highlight;
-  no floating selection toolbar.
-- [~] **M2-05 Sidebar.** Contents, search, and notes tabs. No thumbnails, no
-  resize handle, width is not remembered.
-- [~] **M2-06 In-book search.** Result list, page jump, and match highlighting.
-  No next/previous stepper or match count.
+- [x] **M2-04 Text layer and selection.** Selection with copy and a floating
+  toolbar carrying five highlight swatches; rendered through a portal so the
+  next page cannot cover it.
+- [x] **M2-05 Sidebar.** Contents, search, notes, and Pages tabs; lazy page
+  thumbnails, a resize handle, and a remembered width.
+- [x] **M2-06 In-book search.** Result list, page jump, match highlighting, an
+  active result, and a previous/next stepper with a match count.
 - [x] **M2-07 Progress and finished.** Page progress, auto-finish, override.
 - [~] **M2-08 Highlights.** Five colors, normalized rects, delete. No edit.
 - [~] **M2-09 Notes.** Standalone notes and notes attached to annotations,
   edit and delete. No pinned-page notes.
-- [~] **M2-10 Ink.** Freehand strokes persisted and rendered. No pressure,
-  smoothing, undo/redo, or eraser.
+- [x] **M2-10 Ink.** Freehand strokes with pressure-aware width, smoothed paths,
+  undo/redo (buttons and Ctrl/Cmd+Z), and an eraser tool.
 - [x] **M2-11 Bookmarks.**
-- [~] **M2-12 Annotations panel.** One list with page, type, jump, edit note,
-  delete. No type filter or page grouping.
+- [x] **M2-12 Annotations panel.** One list with page, type, jump, edit note,
+  delete, a type filter, and grouping by page.
 - [x] **M2-13 Per-book settings.** Persisted in `reader_json`.
-- [~] **M2-14 Shortcuts.** Arrows/PageUp/PageDown, Home/End, +/- zoom, F, B, H, I,
-  Escape. Space, search, and a documented list are missing.
-- [~] **M2-15 Reader tests.** One E2E journey. No unit tests for coordinate
-  transforms, annotation persistence, or progress restore.
+- [x] **M2-14 Shortcuts.** Arrows/PageUp/PageDown and Space, Home/End, +/- zoom,
+  F, B, H, I, E, S, Ctrl/Cmd+F, Ctrl/Cmd+Z, `?`, and Escape, with a documented
+  list in the reader and in settings.
+- [~] **M2-15 Reader tests.** Unit tests now cover spread, ink, selection, and
+  search math; E2E covers spread, thumbnails, selection toolbar, ink undo, and
+  search stepping. No unit test for annotation persistence or progress restore.
 
 ## M3 Library model
 
@@ -109,8 +114,8 @@ check are done.
 - [x] **M3-05 Desk.** Reading, pinned, finished-in-30-days, five-book cap.
 - [~] **M3-06 Inbox.** Desk drawer inbox with per-book shelving. No bulk
   shelve and no cart view.
-- [~] **M3-07 Map.** 2D wall plan with floor tabs and travel to the room.
-  No zoom/pan, you-are-here marker, or click-to-travel per bay.
+- [x] **M3-07 Map.** 2D wall plan with floor tabs, zoom/pan, a you-are-here
+  marker, per-bay travel chips, and a return to the room.
 - [x] **M3-08 Tags.**
 - [x] **M3-09 Book details.** Edit metadata, cover, path, stats, remove, relink.
 - [~] **M3-10 Library tests.** Book queries and library service only. No layout
@@ -120,16 +125,18 @@ check are done.
 
 - [x] **M4-01 3D bootstrap.** Raw three.js renderer, resize handling, a custom
   camera, low/medium/high quality presets, and a paused loop while hidden.
-- [~] **M4-02 Room shell.** Walls, floor, rug, bays, desk, lamp. No ceiling,
-  columns, windows, ladders, or gramophone.
+- [x] **M4-02 Room shell.** Walls, floor, rug, bays, desk, lamp, ceiling with
+  beams, four columns, clerestory windows, a rolling ladder, and a gramophone.
 - [x] **M4-03 Shelves from layout.**
 - [x] **M4-04 Books.** Procedural spines baked into one 32×16 texture atlas and
   merged into a single pickable mesh, so the whole shelf is one draw call.
   (Merged batch rather than `InstancedMesh`; same one-draw-call outcome.)
-- [~] **M4-05 Lighting and materials.** Warm key, dusk fill, lamp, ACES tone
-  mapping. No AO, vignette, bloom, or dust.
-- [~] **M4-06 Camera.** OrbitControls plus per-shelf anchors, eased glides with
-  a look-at blend, and a reduced-motion cut. No room-to-room transitions.
+- [x] **M4-05 Lighting and materials.** Warm key, dusk fill, lamp, ACES tone
+  mapping, contact shadows, additive glows, a CSS vignette, and quality-gated
+  dust motes.
+- [x] **M4-06 Camera.** OrbitControls plus per-shelf anchors, eased glides with
+  a look-at blend, a reduced-motion cut, an opening doorway glide, and a fade on
+  room change. Neighbouring rooms are not kept mounted.
 - [x] **M4-07 Picking.** Raycast hover and click on spines, shelf boards, desk.
 - [x] **M4-08 Pull animation.** Spine proxies fly to the camera, grow, and hand
   off to the reader; returning books fly back to their shelf slot.
@@ -148,23 +155,27 @@ check are done.
 - [x] **M5-01 Global search.** Cmd/Ctrl+K, FTS snippets, titles, notes.
 - [x] **M5-02 Search navigation.** Opens the book at the hit page.
 - [x] **M5-03 Music scan.** Folder picker and recursive scan with tags/art.
-- [~] **M5-04 Music player.** Transport, seek, volume, next/previous, dock.
-  No queue panel, browse/search panel, shuffle, or play-folder.
+- [~] **M5-04 Music player.** Transport, seek, volume, next/previous, dock, a
+  queue panel, play-all, and shuffle. No music browse/search panel and no
+  play-folder command.
 - [x] **M5-05 Music persistence.** Volume, last track, and collapse state in
   `localStorage`; Media Session metadata and media keys.
 - [x] **M5-06 Sound effects.** Procedural page, pull, tick, and thud sounds with
   a settings volume; no audio assets.
-- [~] **M5-07 Empty states and onboarding.** First-run folder choice, empty
-  shelves, import prompt. No shortcut hints or guided tour.
+- [x] **M5-07 Empty states and onboarding.** First-run folder choice, empty
+  shelves, import prompt, a first-run tour of four tips, and a rail button to
+  reopen it.
 - [x] **M5-08 Settings panel.** Library, import, quality, reduced motion, sound,
   music, shortcuts, and diagnostics; opened with Ctrl/Cmd + ,.
 - [~] **M5-09 Linux packaging.** AppImage/deb config, app icon, executable name,
   and desktop entry exist and `--linux dir` builds. No clean-machine test yet.
 - [ ] **M5-10 Other platforms.**
-- [~] **M5-11 Branding.** Name, title, palette, display serif. No icon, about
-  screen, or README screenshots.
-- [~] **M5-12 Accessibility pass.** Labels, roles, focus rings on most controls.
-  No full keyboard path through the room and no reduced-motion behavior.
+- [~] **M5-11 Branding.** Name, title, palette, display serif, app icon, and a
+  version/platform line in settings diagnostics. No about window or README
+  screenshots.
+- [x] **M5-12 Accessibility pass.** Labels, roles, focus rings, a keyboard path
+  through the room (arrow shelf travel, Escape), reader keyboard tools, and
+  reduced-motion behavior.
 
 ## M6 Hardening
 
@@ -177,17 +188,26 @@ check are done.
   ENOSPC/EDQUOT and permission errors are reported in plain language.
 - [ ] **M6-05 Low-end performance.**
 - [x] **M6-06 Backup.** Manifest and annotation JSON export.
-- [~] **M6-07 Diagnostics.** Library health API and rotating log file. No log
-  viewer or version/about UI.
-- [~] **M6-08 E2E suite.** Eight tests across annotate, import, import-run,
-  perf, reader, and smoke, including a restart and a shelf move. No packaged
-  binary smoke test.
+- [~] **M6-07 Diagnostics.** Library health API, rotating log file, and version
+  and platform in settings. No log viewer.
+- [~] **M6-08 E2E suite.** Ten tests across annotate, import, import-run, perf,
+  reader, reader-features, room, and smoke, including restarts, a shelf move,
+  spread, ink undo, search stepping, and quality switching. No packaged binary
+  smoke test.
 - [ ] **M6-09 Release checklist.**
 
 ## Done log
 
 Newest first. One line per task or coherent batch.
 
+- 2026-11-21 Feature completion pass: full room shell (ceiling, columns,
+  windows, ladder, gramophone), contact shadows, glows, vignette, dust, doorway
+  glide and room fade; reader spread, Pages thumbnails, resizable sidebar,
+  portal selection toolbar, search stepper, ink undo/redo and eraser, filtered
+  annotation grouping, shortcut overlay; music queue, shuffle and play-all;
+  first-run tour; index arrow keys; map zoom/pan, you-are-here, bay travel;
+  settings version line; pure reader math plus unit tests; reader-features and
+  room E2E specs. Typecheck, lint, 43 unit tests, 10 E2E green.
 - 2026-11-21 M4 room finish: one-batch atlas spines, pull and return flights,
   shelf camera glides, quality presets, loop throttling, reduced motion,
   performance HUD and its 500-book test. M5-05/06/08 (player persistence, sound,

@@ -5,6 +5,7 @@ import type { ImportProgress } from '../shared/types'
 
 const api: AlexandriaApi = {
   ping: () => ipcRenderer.invoke(IPC.appPing),
+  appInfo: () => ipcRenderer.invoke(IPC.appInfo),
   libraryInfo: () => ipcRenderer.invoke(IPC.libraryInfo),
   getSettings: () => ipcRenderer.invoke(IPC.settingsGet),
   setSetting: (key, value) => ipcRenderer.invoke(IPC.settingsSet, key, value),

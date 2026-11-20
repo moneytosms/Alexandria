@@ -16,11 +16,11 @@ The design lives in `SPEC.md`. The task list and its real status live in
 
 - The app builds, launches, imports PDFs and Office documents, reads them,
   annotates them, searches them, and projects the library into a 3D room.
-- `pnpm typecheck`, `pnpm build`, `pnpm test` (29 tests), and `pnpm test:e2e`
-  (8 tests) all pass locally.
-- M0 is complete. M1, M2, and M3 are substantially complete, with the partial
-  items listed in `TODO.md`. M4 is mostly done (remaining: shell props, lighting
-  passes, room-to-room camera travel). M5 is mostly done. M6 has started.
+- `pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm test` (43 tests), and
+  `pnpm test:e2e` (10 tests) all pass locally.
+- M0–M4 are complete apart from the partials listed in `TODO.md` (thumbnail
+  cache, encrypted-fixture coverage, layout tests, drag-and-drop shelving).
+  M5 is nearly done; M6 is in its hardening pass.
 - The working tree is committed. The only untracked file, `mise.toml`, is a
   local tool pin and intentionally not part of the project.
 - There is still no git remote, so CI has never run remotely.
@@ -32,8 +32,9 @@ The design lives in `SPEC.md`. The task list and its real status live in
 1. Run `pnpm install`, then `pnpm typecheck`, `pnpm test`, and `pnpm build`.
 2. Read `SPEC.md` sections 6 (experience), 9 (architecture), and 10 (the room).
 3. Open `TODO.md` and continue at `Current focus`.
-4. Skim `src/renderer/src/views/RoomView.tsx` (shell props, lighting, camera
-   transitions) and the partial reader tasks in M2 before the release push.
+4. Skim `src/renderer/src/views/RoomView.tsx` (shell, lighting, camera) and
+   `ReaderView.tsx` (spread, ink, selection) before the release push, then work
+   the partials in `TODO.md`.
 
 ## How to resume
 

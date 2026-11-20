@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { writePdf } from '../fixtures/pdf'
+import { dismissWelcome } from './helpers'
 
 let libraryPath: string
 let sourcePath: string
@@ -51,6 +52,7 @@ async function importBook(page: Page, app: Awaited<ReturnType<typeof electron.la
 test('draws ink, adds a note, moves the book, and keeps both across restart', async () => {
   const app = await launch()
   const page = await app.firstWindow()
+  await dismissWelcome(page)
   await expect(page.getByRole('heading', { name: 'The reading room', level: 1 })).toBeVisible()
 
   await importBook(page, app)

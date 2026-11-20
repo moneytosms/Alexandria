@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { audioUrl } from '../media'
 import { usePlayerStore } from '../state/ui-store'
 
@@ -17,6 +17,10 @@ export function MusicDock() {
   const progress = usePlayerStore((state) => state.progress)
   const duration = usePlayerStore((state) => state.duration)
   const collapsed = usePlayerStore((state) => state.collapsed)
+  const shuffle = usePlayerStore((state) => state.shuffle)
+  const shuffleOn = usePlayerStore((state) => state.toggleShuffle)
+  const playAll = usePlayerStore((state) => state.playAll)
+  const playIndex = usePlayerStore((state) => state.playIndex)
   const toggle = usePlayerStore((state) => state.toggle)
   const next = usePlayerStore((state) => state.next)
   const previous = usePlayerStore((state) => state.previous)
@@ -26,6 +30,7 @@ export function MusicDock() {
   const setCollapsed = usePlayerStore((state) => state.setCollapsed)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const [queueOpen, setQueueOpen] = useState(false)
   const current = index >= 0 ? tracks[index] : null
 
   useEffect(() => {
@@ -92,6 +97,38 @@ export function MusicDock() {
         onPlay={() => setPlaying(true)}
       />
 
+      {queueOpen && !collapsed ? (
+        <div className="music-queue" role="dialog" aria-label="Music queue">
+          <header className="music-queue__head">
+            <span>
+              {tracks.length} {tracks.length === 1 ? 'track' : 'tracks'}
+            </span>
+            <div>
+              <button type="button" onClick={() => playAll(0)}>
+                Play all
+              </button>
+              <button type="button" aria-label="Close queue" onClick={() => setQueueOpen(false)}>
+                ×
+              </button>
+            </div>
+          </header>
+          <ul className="music-queue__list">
+            {tracks.map((track, trackIndex) => (
+              <li key={track.path}>
+                <button
+                  type="button"
+                  className={trackIndex === index ? 'music-queue__on' : undefined}
+                  onClick={() => playIndex(trackIndex)}
+                >
+                  <span className="music-queue__title">{track.title}</span>
+                  <span className="music-queue__artist">{track.artist ?? track.album ?? ''}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       <button
         type="button"
         className="music-player__art"
@@ -115,6 +152,16 @@ export function MusicDock() {
           </div>
 
           <div className="music-player__controls">
+            <button
+              type="button"
+              className={`icon-button ${shuffle ? 'icon-button--on' : ''}`}
+              aria-label="Shuffle"
+              aria-pressed={shuffle}
+              title={shuffle ? 'Shuffle on' : 'Shuffle off'}
+              onClick={shuffleOn}
+            >
+              ⤨
+            </button>
             <button type="button" className="icon-button" onClick={previous} aria-label="Previous track">
               ⏮
             </button>
@@ -128,6 +175,15 @@ export function MusicDock() {
             </button>
             <button type="button" className="icon-button" onClick={next} aria-label="Next track">
               ⏭
+            </button>
+            <button
+              type="button"
+              className={`icon-button ${queueOpen ? 'icon-button--on' : ''}`}
+              aria-label="Music queue"
+              aria-expanded={queueOpen}
+              onClick={() => setQueueOpen((open) => !open)}
+            >
+              ≡
             </button>
           </div>
 

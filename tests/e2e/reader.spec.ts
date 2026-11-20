@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { writePdf } from '../fixtures/pdf'
+import { dismissWelcome } from './helpers'
 
 let libraryPath: string
 let sourcePath: string
@@ -50,6 +51,7 @@ test('opens a PDF, turns pages, bookmarks, and searches inside it', async () => 
     env: { ...process.env, ALEXANDRIA_LIBRARY_PATH: libraryPath } as Record<string, string>
   })
   const page = await app.firstWindow()
+  await dismissWelcome(page)
   await expect(page.getByRole('heading', { name: 'The reading room', level: 1 })).toBeVisible()
 
   await importBook(page, app)

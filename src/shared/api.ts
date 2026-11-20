@@ -29,6 +29,15 @@ export interface LibraryInfo {
   slots: number
 }
 
+export interface AppInfo {
+  name: string
+  version: string
+  electron: string
+  chrome: string
+  node: string
+  platform: string
+}
+
 export type LogLevel = 'info' | 'warn' | 'error'
 
 export interface MissingScanResult {
@@ -59,6 +68,7 @@ export interface ExportResult {
 
 export interface AlexandriaApi {
   ping: () => Promise<string>
+  appInfo: () => Promise<AppInfo>
   libraryInfo: () => Promise<LibraryInfo>
   getSettings: () => Promise<Record<string, string>>
   setSetting: (key: string, value: string) => Promise<void>

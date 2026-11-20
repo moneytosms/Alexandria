@@ -1321,6 +1321,39 @@ kbd {
   height: 100%;
 }
 
+.room__fade {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at 50% 45%,
+    rgba(12, 10, 9, 0) 38%,
+    rgba(12, 10, 9, 0.42) 78%,
+    rgba(8, 6, 5, 0.82) 100%
+  );
+}
+
+.room__fade--animate {
+  animation: room-fade 1.2s ease-out both;
+}
+
+@keyframes room-fade {
+  from {
+    opacity: 1;
+    background: #0c0a09;
+  }
+  to {
+    opacity: 1;
+    background: radial-gradient(
+      ellipse at 50% 45%,
+      rgba(12, 10, 9, 0) 38%,
+      rgba(12, 10, 9, 0.42) 78%,
+      rgba(8, 6, 5, 0.82) 100%
+    );
+  }
+}
+
 .room__hud {
   position: absolute;
   top: 2rem;
@@ -1585,6 +1618,91 @@ kbd {
 
 .map__enter {
   margin-top: 0.5rem;
+}
+
+.map__stage {
+  min-width: 0;
+}
+
+.map__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.map__toolbar .map__floors {
+  margin-bottom: 0;
+}
+
+.map__zoom {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.62rem;
+  color: var(--muted);
+}
+
+.map__plan-wrap {
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  border: 1px solid rgba(176, 141, 87, 0.08);
+}
+
+.map__plan-wrap:active {
+  cursor: grabbing;
+}
+
+.map__plan {
+  transform-origin: 50% 50%;
+}
+
+.map__section-card {
+  display: grid;
+  gap: 0.3rem;
+  justify-items: center;
+}
+
+.map__bays {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.25rem;
+}
+
+.map__bay {
+  width: 1.25rem;
+  height: 1.25rem;
+  font-size: 0.55rem;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.map__bay:hover {
+  color: var(--parchment);
+  border-color: var(--brass);
+}
+
+.map__youarehere {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.52rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--brass-bright);
+  border: 1px solid rgba(176, 141, 87, 0.4);
+}
+
+.map__hint {
+  margin: 0.6rem 0 0;
+  font-size: 0.56rem;
+  letter-spacing: 0.1em;
+  color: var(--muted);
 }
 
 /* Index additions */
@@ -2207,6 +2325,144 @@ kbd {
   color: var(--muted);
 }
 
+.search-results button.search-results__hit--active {
+  background: rgba(176, 141, 87, 0.14);
+}
+
+.search-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  font-size: 0.62rem;
+  color: var(--muted);
+}
+
+.reader__spread {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.reader__spread .pdf-page {
+  flex: 0 0 auto;
+}
+
+.reader__sidebar {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.reader__resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 2;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.selection-toolbar {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.45rem;
+  transform: translate(-50%, -100%);
+  background: #171310;
+  border: 1px solid rgba(176, 141, 87, 0.35);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.55);
+}
+
+.selection-toolbar button {
+  padding: 0.25rem 0.45rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  color: var(--parchment);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.selection-toolbar button:hover {
+  border-color: var(--brass);
+}
+
+.selection-toolbar .swatch {
+  width: 1.05rem;
+  height: 1.05rem;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+}
+
+.selection-toolbar__label {
+  font-size: 0.5rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.pdf-page__ink--erasing {
+  pointer-events: auto;
+  cursor: not-allowed;
+}
+
+.pdf-page__stroke {
+  cursor: pointer;
+}
+
+.thumbs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin-top: 0.6rem;
+}
+
+.thumb {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.3rem;
+  font-size: 0.56rem;
+  color: var(--muted);
+  background: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.thumb canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.thumb--on {
+  color: var(--parchment);
+  border-color: var(--brass);
+}
+
+.thumb--placeholder {
+  display: grid;
+  min-height: 5rem;
+  place-items: center;
+  border: 1px dashed var(--line);
+}
+
+.annotation-group__head {
+  margin: 1rem 0 0.3rem;
+  font-size: 0.54rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--brass);
+}
+
 .reader__note-compose textarea {
   width: 100%;
   padding: 0.55rem;
@@ -2511,6 +2767,96 @@ kbd {
   width: auto;
   padding: 0.35rem;
   border-radius: 50%;
+}
+
+.icon-button--on {
+  color: var(--brass-bright);
+  border-color: rgba(176, 141, 87, 0.5);
+}
+
+.music-queue {
+  position: absolute;
+  bottom: calc(100% + 0.5rem);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  width: min(420px, calc(100vw - 3rem));
+  max-height: min(52vh, 420px);
+  background: rgba(18, 16, 14, 0.98);
+  border: 1px solid rgba(176, 141, 87, 0.3);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+.music-queue__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.56rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.music-queue__head div {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.music-queue__head button {
+  padding: 0.2rem 0.45rem;
+  font-size: 0.58rem;
+  color: var(--parchment);
+  background: none;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.music-queue__list {
+  margin: 0;
+  padding: 0.25rem;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.music-queue__list button {
+  display: grid;
+  gap: 0.1rem;
+  width: 100%;
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.music-queue__list button:hover {
+  background: rgba(176, 141, 87, 0.07);
+}
+
+.music-queue__list button.music-queue__on {
+  background: rgba(176, 141, 87, 0.16);
+}
+
+.music-queue__title {
+  overflow: hidden;
+  font-family: var(--serif);
+  font-size: 0.82rem;
+  color: var(--parchment);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.music-queue__artist {
+  overflow: hidden;
+  font-size: 0.52rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .music-player__art {
@@ -2976,4 +3322,70 @@ kbd {
   .settings__grid {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* First-run tour and its rail trigger */
+.rail__tips {
+  display: grid;
+  place-items: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  margin-top: 0.45rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.rail__tips:hover {
+  color: var(--parchment);
+  border-color: var(--brass);
+}
+
+.welcome {
+  width: min(440px, calc(100vw - 3rem));
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+  padding: 1.3rem 1.4rem;
+  background:
+    radial-gradient(130% 100% at 0% 0%, rgba(176, 141, 87, 0.1), transparent 62%),
+    rgba(18, 16, 14, 0.98);
+  border: 1px solid rgba(176, 141, 87, 0.3);
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.55);
+}
+
+.welcome__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.welcome__list {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.8rem 0;
+  padding-left: 1.1rem;
+}
+
+.welcome__list li {
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.welcome__list strong {
+  display: block;
+  margin-bottom: 0.12rem;
+  font-size: 0.55rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--parchment);
+}
+
+.welcome__actions {
+  display: flex;
+  gap: 0.5rem;
 }

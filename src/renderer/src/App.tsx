@@ -3,6 +3,7 @@ import { MusicDock } from './components/MusicDock'
 import { QueueTray } from './components/QueueTray'
 import { SearchOverlay } from './components/SearchOverlay'
 import { SettingsDialog } from './components/SettingsDialog'
+import { WelcomeCard, shouldShowWelcome } from './components/WelcomeCard'
 import { queueDroppedFiles } from './import-actions'
 import { navigate, useView, viewIds, viewMeta } from './router'
 import { useLibraryStore, type LibraryStatus } from './state/library-store'
@@ -31,6 +32,7 @@ export default function App() {
   const loadLibrary = useLibraryStore((state) => state.load)
   const setSearchOpen = useUiStore((state) => state.setSearchOpen)
   const setSettingsOpen = useUiStore((state) => state.setSettingsOpen)
+  const setTipsOpen = useUiStore((state) => state.setTipsOpen)
   const loadSettings = useSettingsStore((state) => state.load)
   const selectedBook = useUiStore((state) => state.selectedBook)
   const [dragging, setDragging] = useState(false)
@@ -76,6 +78,10 @@ export default function App() {
     restorePlayer()
     return wirePlayerPersistence()
   }, [])
+
+  useEffect(() => {
+    if (shouldShowWelcome()) setTipsOpen(true)
+  }, [setTipsOpen])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -137,6 +143,14 @@ export default function App() {
           <span className="rail__path" title={library?.root ?? undefined}>
             {library?.root ?? 'Locating library…'}
           </span>
+          <button
+            className="rail__tips"
+            type="button"
+            onClick={() => setTipsOpen(true)}
+            title="Tips and shortcuts"
+          >
+            ?
+          </button>
         </div>
       </aside>
 
@@ -189,6 +203,7 @@ export default function App() {
       <MusicDock />
       <SearchOverlay />
       <SettingsDialog library={library} />
+      <WelcomeCard />
 
       {dragging ? (
         <div className="drop-overlay" aria-hidden="true">
