@@ -1,7 +1,8 @@
 import { _electron as electron, expect, test } from '@playwright/test'
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { writePdf } from '../fixtures/pdf'
 
 let libraryPath: string
 let sourcePath: string
@@ -13,8 +14,9 @@ test.beforeAll(() => {
   sourcePath = mkdtempSync(join(tmpdir(), 'alexandria-run-src-'))
   first = join(sourcePath, 'dup-a.pdf')
   second = join(sourcePath, 'dup-b.pdf')
-  writeFileSync(first, 'identical content')
-  writeFileSync(second, 'identical content')
+  const content = { title: null, author: null, pages: ['The same page in both files.'] }
+  writePdf(first, content)
+  writePdf(second, content)
 })
 
 test.afterAll(() => {
@@ -60,7 +62,7 @@ test('imports a PDF, dedupes identical content, and persists it', async () => {
   await page.getByRole('button', { name: 'Index', exact: true }).click()
 
   await expect(page.getByRole('heading', { name: 'The index', level: 1 })).toBeVisible()
-  await expect(page.getByText('1 volume', { exact: true })).toBeVisible()
+  await expect(page.getByText('1 of 1 volume', { exact: true })).toBeVisible()
   await expect(page.getByText('dup-a', { exact: true })).toBeVisible()
 
   await app.close()

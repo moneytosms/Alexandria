@@ -24,8 +24,8 @@ test('opens the Alexandria shell with a fresh library', async () => {
   await expect(page.getByText('Library ready')).toBeVisible()
   await expect(page.getByText(libraryPath)).toBeVisible()
 
-  const shelves = page.locator('.room__stats div', { hasText: 'Shelves' }).locator('dd')
-  await expect(shelves).toHaveText('20')
+  const shelves = page.locator('.room__hud-stats div', { hasText: 'Volumes' }).locator('dd')
+  await expect(shelves).toHaveText('0')
 
   const renderer = await page.evaluate(() => {
     const canvas = document.createElement('canvas')
