@@ -4,6 +4,9 @@ import { IPC } from '../shared/ipc'
 import { getLibraryInfo } from './library/info'
 import { registerBooksHandlers } from './ipc/books'
 import { registerImportHandlers } from './ipc/import'
+import { registerLibraryHandlers } from './ipc/library'
+import { registerMusicHandlers } from './ipc/music'
+import { installMediaProtocol, registerMediaScheme } from './media/protocol'
 import {
   defaultLibraryRoot,
   hasStoredLibraryRoot,
@@ -17,8 +20,12 @@ import { createLogger, getLogger, setLogger } from './logger'
 app.setName('Alexandria')
 app.commandLine.appendSwitch('ozone-platform-hint', 'auto')
 
+registerMediaScheme()
+
 registerImportHandlers()
 registerBooksHandlers()
+registerLibraryHandlers()
+registerMusicHandlers()
 
 process.on('uncaughtException', (error) => {
   getLogger().error('Uncaught exception in main', error.stack ?? String(error))
@@ -67,6 +74,10 @@ function openExternal(url: string): void {
     void shell.openExternal(url)
   }
 }
+
+ipcMain.handle(IPC.openExternal, (_event, url: unknown) => {
+  if (typeof url === 'string') openExternal(url)
+})
 
 async function resolveRootForFirstRun(): Promise<string | null> {
   if (hasStoredLibraryRoot()) return resolveLibraryRoot()
@@ -169,6 +180,7 @@ void app.whenReady().then(async () => {
   if (!root) return
 
   openLibrary(root)
+  installMediaProtocol()
   setLogger(createLogger(join(getLibrary().paths.logs, 'main.log')))
   getLogger().info(`Opened library at ${root}`)
 
