@@ -1,11 +1,16 @@
+import { getDemoCoverUrl } from './static-demo-bridge'
+
 const isElectron =
   typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('electron')
+const isStaticDemo = import.meta.env.VITE_STATIC_DEMO === 'true'
 
 export function coverUrl(bookId: number): string {
+  if (isStaticDemo) return getDemoCoverUrl(bookId)
   return isElectron ? `alexandria://cover/${bookId}` : `/api/media/cover/${bookId}`
 }
 
 export function thumbUrl(bookId: number, page: number): string {
+  if (isStaticDemo) return getDemoCoverUrl(bookId)
   return isElectron ? `alexandria://thumb/${bookId}/${page}` : `/api/media/thumb/${bookId}/${page}`
 }
 

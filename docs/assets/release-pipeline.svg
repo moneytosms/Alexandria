@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img" aria-label="Alexandria Automated CI, GitHub Pages, and Cross-Platform Release Pipeline">
+  <defs>
+    <marker id="arrowGold" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 1 L9 5 L0 9 Z" fill="#C8A25B" />
+    </marker>
+  </defs>
+
+  <rect width="1200" height="300" rx="12" fill="#090807" />
+  <rect x="1" y="1" width="1198" height="298" rx="11" fill="none" stroke="#C8A25B" stroke-opacity="0.24" stroke-width="1" />
+
+  <text x="36" y="38" fill="#C8A25B" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" letter-spacing="2.8">
+    AUTOMATED GITHUB ACTIONS PIPELINE
+  </text>
+
+  <!-- Node 1: Trigger -->
+  <g transform="translate(36, 98)">
+    <rect width="206" height="114" rx="6" fill="#15110E" stroke="#C8A25B" stroke-opacity="0.45" stroke-width="1.2" />
+    <text x="18" y="28" fill="#E3C27F" font-family="ui-monospace, Menlo, monospace" font-size="10" letter-spacing="1.4">TRIGGER</text>
+    <text x="18" y="58" fill="#F5EFE4" font-family="Georgia, serif" font-size="20">git push main</text>
+    <text x="18" y="80" fill="#B5AB9C" font-family="ui-monospace, Menlo, monospace" font-size="11.5">or tag v* release</text>
+    <text x="18" y="100" fill="#8E8474" font-family="-apple-system, sans-serif" font-size="11.5">Zero manual packaging</text>
+  </g>
+
+  <!-- Arrow Trigger -> Verify -->
+  <line x1="242" y1="155" x2="288" y2="155" stroke="#C8A25B" stroke-width="1.5" marker-end="url(#arrowGold)" />
+
+  <!-- Node 2: Verify Gate -->
+  <g transform="translate(294, 98)">
+    <rect width="224" height="114" rx="6" fill="#15110E" stroke="#C8A25B" stroke-opacity="0.34" stroke-width="1.1" />
+    <text x="18" y="28" fill="#E3C27F" font-family="ui-monospace, Menlo, monospace" font-size="10" letter-spacing="1.4">QUALITY GATE</text>
+    <text x="18" y="56" fill="#F5EFE4" font-family="Georgia, serif" font-size="19">CI Verification</text>
+    <text x="18" y="79" fill="#B5AB9C" font-family="ui-monospace, Menlo, monospace" font-size="11">ESLint · Typecheck</text>
+    <text x="18" y="99" fill="#B5AB9C" font-family="ui-monospace, Menlo, monospace" font-size="11">Vitest · Vite Build</text>
+  </g>
+
+  <!-- Branching Connectors -->
+  <path d="M518 134 C554 134, 554 96, 594 96" fill="none" stroke="#C8A25B" stroke-width="1.5" marker-end="url(#arrowGold)" />
+  <path d="M518 176 C554 176, 554 214, 594 214" fill="none" stroke="#C8A25B" stroke-width="1.5" marker-end="url(#arrowGold)" />
+
+  <!-- Branch Top: GitHub Pages -->
+  <g transform="translate(602, 54)">
+    <rect width="562" height="90" rx="6" fill="#17130F" stroke="#E3C27F" stroke-opacity="0.45" stroke-width="1.2" />
+    <text x="20" y="26" fill="#E3C27F" font-family="ui-monospace, Menlo, monospace" font-size="10" letter-spacing="1.4">
+      GITHUB PAGES · .github/workflows/pages.yml
+    </text>
+    <text x="20" y="52" fill="#F5EFE4" font-family="Georgia, serif" font-size="19">
+      Product Landing Page + Static Web Demo
+    </text>
+    <text x="20" y="74" fill="#B5AB9C" font-family="ui-monospace, Menlo, monospace" font-size="11">
+      &lt;username&gt;.github.io/Alexandria/  ·  Live OS Release Detection  ·  /demo/ Sandbox
+    </text>
+  </g>
+
+  <!-- Branch Bottom: Desktop Releases -->
+  <g transform="translate(602, 166)">
+    <rect width="562" height="100" rx="6" fill="#17130F" stroke="#C8A25B" stroke-opacity="0.4" stroke-width="1.2" />
+    <text x="20" y="26" fill="#E3C27F" font-family="ui-monospace, Menlo, monospace" font-size="10" letter-spacing="1.4">
+      CROSS-PLATFORM DESKTOP RELEASES · .github/workflows/release.yml
+    </text>
+    <text x="20" y="52" fill="#F5EFE4" font-family="Georgia, serif" font-size="19">
+      Linux · Windows · macOS + SHA256SUMS.txt
+    </text>
+    <text x="20" y="74" fill="#B5AB9C" font-family="ui-monospace, Menlo, monospace" font-size="11">
+      .AppImage · .deb · -setup.exe · -portable.exe · .dmg · .zip
+    </text>
+    <text x="20" y="90" fill="#8E8474" font-family="-apple-system, sans-serif" font-size="11">
+      Updates rolling latest release on push to main, or publishes versioned release on v* tags
+    </text>
+  </g>
+</svg>

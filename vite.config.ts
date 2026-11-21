@@ -25,6 +25,7 @@ function webCspPlugin(): Plugin {
 }
 
 export default defineConfig({
+  base: process.env.VITE_BASE || '/',
   root: resolve(__dirname, 'src/renderer'),
   resolve: {
     alias: {
@@ -39,7 +40,9 @@ export default defineConfig({
     allowedHosts: true
   },
   build: {
-    outDir: resolve(__dirname, 'dist'),
+    outDir: process.env.VITE_OUT_DIR
+      ? resolve(__dirname, process.env.VITE_OUT_DIR)
+      : resolve(__dirname, 'dist'),
     emptyOutDir: true
   }
 })

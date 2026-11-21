@@ -1,5 +1,8 @@
 import type { AlexandriaApi } from '@shared/api'
 import type { ImportProgress, ImportScanResult } from '@shared/types'
+import { createStaticDemoApi } from './static-demo-bridge'
+
+const isStaticDemo = import.meta.env.VITE_STATIC_DEMO === 'true'
 
 const stagedFiles = new Map<string, File>()
 let stagedCounter = 0
@@ -78,6 +81,11 @@ async function uploadAndScanFiles(files: File[]): Promise<ImportScanResult> {
 
 export function installWebBridge(): void {
   if (typeof window === 'undefined' || window.alexandria) return
+
+  if (isStaticDemo) {
+    window.alexandria = createStaticDemoApi()
+    return
+  }
 
   const progressListeners = new Set<(progress: ImportProgress) => void>()
 

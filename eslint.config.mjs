@@ -6,7 +6,9 @@ export default tseslint.config(
   {
     ignores: [
       'dist/**',
+      'dist-pages/**',
       'out/**',
+      'release/**',
       'node_modules/**',
       'coverage/**',
       'test-results/**',
@@ -15,6 +17,14 @@ export default tseslint.config(
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        ...globals.node
+      }
+    }
+  },
   {
     files: ['**/*.{ts,tsx}'],
     languageOptions: {

@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+  --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-obsidian: #090807;
+  --color-walnut: #14110E;
+  --color-walnut-elevated: #1B1612;
+  --color-brass: #C8A25B;
+  --color-brass-bright: #E3C27F;
+  --color-brass-muted: #8E7342;
+  --color-ivory: #F2ECE1;
+  --color-parchment: #D8CFC0;
+  --color-ash: #9D9384;
+}
+
+@layer base {
+  html {
+    background-color: #090807;
+    color: #F2ECE1;
+    font-family: var(--font-sans);
+    scroll-behavior: auto;
+  }
+
+  body {
+    margin: 0;
+    overflow-x: hidden;
+    background-color: #090807;
+    color: #F2ECE1;
+  }
+
+  ::selection {
+    background: rgba(200, 162, 91, 0.28);
+    color: #F8F3EA;
+  }
+}
+
+.font-display {
+  font-family: var(--font-serif);
+}
+
+.font-ui {
+  font-family: var(--font-sans);
+}
+
+.font-code {
+  font-family: var(--font-mono);
+}
+
+/* Subtle warm radial vignette anchoring the sticky WebGL canvas without washing out depth */
+.stage-vignette {
+  background:
+    radial-gradient(62% 54% at 62% 48%, rgba(200, 162, 91, 0.08) 0%, rgba(9, 8, 7, 0) 70%),
+    radial-gradient(90% 80% at 50% 50%, rgba(9, 8, 7, 0) 48%, rgba(5, 4, 3, 0.88) 100%);
+}
+
+/* Fine engraved brass hairline rule */
+.brass-rule {
+  background: linear-gradient(
+    90deg,
+    rgba(200, 162, 91, 0.42) 0%,
+    rgba(200, 162, 91, 0.14) 55%,
+    rgba(200, 162, 91, 0) 100%
+  );
+}
+
+/* Focus ring strictly in gilded brass */
+.focus-brass:focus-visible {
+  outline: 1.5px solid #E3C27F;
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

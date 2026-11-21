@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: User Guide & Documentation
+    url: https://github.com/Srimoneyshankar/Alexandria/blob/main/docs/USER_GUIDE.md
+    about: Setup instructions, 3D Grand Hall features, Reader tips, and backups
+  - name: Controls & Shortcuts Reference
+    url: https://github.com/Srimoneyshankar/Alexandria/blob/main/docs/CONTROLS.md
+    about: Full keyboard and mouse bindings across the Hall and Reader
+  - name: Security Vulnerability Reporting
+    url: https://github.com/Srimoneyshankar/Alexandria/blob/main/SECURITY.md
+    about: Please report security issues privately rather than opening a public issue

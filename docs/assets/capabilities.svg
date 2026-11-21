@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" width="1200" height="340" role="img" aria-label="Alexandria Core Capabilities">
+  <defs>
+    <linearGradient id="cardBg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#171310" />
+      <stop offset="100%" stop-color="#0E0C0A" />
+    </linearGradient>
+    <linearGradient id="topAccent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#E3C27F" />
+      <stop offset="100%" stop-color="#8E7342" />
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="340" rx="12" fill="#090807" />
+  <rect x="1" y="1" width="1198" height="338" rx="11" fill="none" stroke="#C8A25B" stroke-opacity="0.22" stroke-width="1" />
+
+  <text x="36" y="42" fill="#C8A25B" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" letter-spacing="2.8">
+    FOUR ARCHITECTURAL PILLARS
+  </text>
+
+  <!-- Card 1: 3D Grand Hall -->
+  <g transform="translate(36, 64)">
+    <rect width="264" height="244" rx="6" fill="url(#cardBg)" stroke="#C8A25B" stroke-opacity="0.26" stroke-width="1" />
+    <rect width="264" height="2" rx="1" fill="url(#topAccent)" />
+    <!-- Icon: Archway & Shelves -->
+    <g transform="translate(26, 28)" stroke="#E3C27F" stroke-width="1.5" fill="none">
+      <path d="M4 34 V16 A14 14 0 0 1 32 16 V34" />
+      <line x1="0" y1="34" x2="36" y2="34" />
+      <line x1="12" y1="18" x2="12" y2="34" stroke-opacity="0.7" />
+      <line x1="18" y1="14" x2="18" y2="34" stroke-opacity="0.7" />
+      <line x1="24" y1="18" x2="24" y2="34" stroke-opacity="0.7" />
+    </g>
+    <text x="24" y="96" fill="#F5EFE4" font-family="Georgia, serif" font-size="22" font-weight="500">3D Grand Hall</text>
+    <text x="24" y="126" fill="#B6ACA0" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">Walkable mezzanine balcony,</text>
+    <text x="24" y="146" fill="#B6ACA0" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">drag-and-drop oak shelves, live</text>
+    <text x="24" y="166" fill="#B6ACA0" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">mini-map, and ambient audio.</text>
+    <line x1="24" y1="196" x2="240" y2="196" stroke="#C8A25B" stroke-opacity="0.18" />
+    <text x="24" y="220" fill="#C8A25B" font-family="ui-monospace, Menlo, monospace" font-size="10.5">3 Themes · Weather · WASD</text>
+  </g>
+
+  <!-- Card 2: Precision Reader -->
+  <g transform="translate(324, 64)">
+    <rect width="264" height="244" rx="6" fill="url(#cardBg)" stroke="#C8A25B" stroke-opacity="0.26" stroke-width="1" />
+    <rect width="264" height="2" rx="1" fill="url(#topAccent)" />
+    <!-- Icon: Open Folio & Highlight -->
+    <g transform="translate(26, 28)" stroke="#E3C27F" stroke-width="1.5" fill="none">
+      <path d="M2 8 Q10 4 18 8 V32 Q10 28 2 32 Z" />
+      <path d="M34 8 Q26 4 18 8 V32 Q26 28 34 32 Z" />
+      <rect x="21" y="14" width="10" height="3.5" fill="#C8A25B" fill-opacity="0.6" stroke="none" />
+      <line x1="6" y1="15" x2="14" y2="15" stroke-opacity="0.6" />
+      <line x1="6" y1="21" x2="14" y2="21" stroke-opacity="0.6" />
+    </g>
+    <text x="24" y="96" fill="#F5EFE4" font-family="Georgia, serif" font-size="22" font-weight="500">Precision Reader</text>
+    <text x="24" y="126" fill="#B6ACA0" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">Double-buffered Retina PDF.js</text>
+    <text x="24" y="146" fill="#B6ACA0" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">rendering with exact-click ink,</text>
+    <text x="24" y="166" fill="#B6ACA0" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">highlights, notes &amp; Study Mode.</text>
+    <line x1="24" y1="196" x2="240" y2="196" stroke="#C8A25B" stroke-opacity="0.18" />
+    <text x="24" y="220" fill="#C8A25B" font-family="ui-monospace, Menlo, monospace" font-size="10.5">Highlight · Ink · Erase · Timer</text>
+  </g>
+
+  <!-- Card 3: Local-First Engine -->
+  <g transform="translate(612, 64)">
+    <rect width="264" height="244" rx="6" fill="url(#cardBg)" stroke="#C8A25B" stroke-opacity="0.26" stroke-width="1" />
+    <rect width="264" height="2" rx="1" fill="url(#topAccent)" />
+    <!-- Icon: SQLite Cylinder & Key -->
+    <g transform="translate(26, 28)" stroke="#E3C27F" stroke-width="1.5" fill="none">
+      <ellipse cx="18" cy="9" rx="14" ry="5" />
+      <path d="M4 9 V27 A14 5 0 0 0 32 27 V9" />
+      <path d="M4 18 A14 5 0 0 0 32 18" stroke-opacity="0.6" />
+    </g>
+    <text x="24" y="96" fill="#F5EFE4" font-family="Georgia, serif" font-size="22" font-weight="500">Local-First Core</text>
+    <text x="24" y="126" fill="#B6ACA0" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">One plain folder on your disk:</text>
+    <text x="24" y="146" fill="#B6ACA0" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">SQLite FTS5 instant full-text</text>
+    <text x="24" y="166" fill="#B6ACA0" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">search and SHA-256 dedupe.</text>
+    <line x1="24" y1="196" x2="240" y2="196" stroke="#C8A25B" stroke-opacity="0.18" />
+    <text x="24" y="220" fill="#C8A25B" font-family="ui-monospace, Menlo, monospace" font-size="10.5">Ctrl/Cmd+K · Zero Telemetry</text>
+  </g>
+
+  <!-- Card 4: Native Releases -->
+  <g transform="translate(900, 64)">
+    <rect width="264" height="244" rx="6" fill="url(#cardBg)" stroke="#C8A25B" stroke-opacity="0.26" stroke-width="1" />
+    <rect width="264" height="2" rx="1" fill="url(#topAccent)" />
+    <!-- Icon: Package Cube & Checksum -->
+    <g transform="translate(26, 28)" stroke="#E3C27F" stroke-width="1.5" fill="none">
+      <polygon points="18,3 32,11 32,26 18,34 4,26 4,11" />
+      <polyline points="4,11 18,19 32,11" />
+      <line x1="18" y1="19" x2="18" y2="34" />
+    </g>
+    <text x="24" y="96" fill="#F5EFE4" font-family="Georgia, serif" font-size="22" font-weight="500">Native Desktop</text>
+    <text x="24" y="126" fill="#B6ACA0" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">Automated CI builds for Linux,</text>
+    <text x="24" y="146" fill="#B6ACA0" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">Windows, and macOS with full</text>
+    <text x="24" y="166" fill="#B6ACA0" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">SHA-256 verification sums.</text>
+    <line x1="24" y1="196" x2="240" y2="196" stroke="#C8A25B" stroke-opacity="0.18" />
+    <text x="24" y="220" fill="#C8A25B" font-family="ui-monospace, Menlo, monospace" font-size="10.5">AppImage · .deb · .exe · .dmg</text>
+  </g>
+</svg>

@@ -1,0 +1,81 @@
+name: Bug Report
+description: Report a bug in Alexandria (3D Grand Hall, PDF Reader, Importer, Desktop Packaging, or Web Demo)
+title: '[Bug]: '
+labels: ['bug', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve Alexandria! Please check existing issues first and fill in the details below so we can reproduce the problem quickly.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected Area
+      options:
+        - 3D Grand Hall (Navigation, Shelves, Themes, Audio)
+        - Precision PDF Reader (Rendering, Highlight, Ink, Erase, Study Mode)
+        - Import, Indexing & SQLite FTS5 Search
+        - Floor Map, Index & Librarian Views
+        - Desktop Packaging / Installer (AppImage, .deb, .exe, .dmg)
+        - Landing Page / Static Web Demo
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating System & Runtime
+      options:
+        - Linux (AppImage)
+        - Linux (.deb)
+        - Windows (Installer / Portable .exe)
+        - macOS (Apple Silicon .dmg / .zip)
+        - Browser (Web Preview / GitHub Pages Demo)
+        - Local Dev (npm run dev / dev:electron)
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Alexandria Version or Commit SHA
+      placeholder: e.g. v0.1.0 or latest (abc1234)
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What Happened?
+      description: Describe the unexpected behavior clearly.
+      placeholder: When clicking Highlight on page 3...
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal numbered steps to reproduce the issue.
+      value: |
+        1. Open Alexandria and go to ...
+        2. Click / press ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or Screenshots (Optional)
+      description: Paste relevant lines from ~/Alexandria/logs/main.log or attach screenshots (please redact personal filenames if desired).
+      render: text

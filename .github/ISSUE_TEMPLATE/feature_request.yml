@@ -1,0 +1,46 @@
+name: Feature Request
+description: Propose a new feature, 3D Grand Hall enhancement, or Reader improvement
+title: '[Feature]: '
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We love thoughtful ideas that strengthen Alexandria as a calm, local-first reading sanctuary.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Product Area
+      options:
+        - 3D Grand Hall & Atmosphere
+        - Precision PDF Reader & Annotations
+        - Library Organization, Tags & Search
+        - Desktop Platform & Releases
+        - Documentation & Developer Experience
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Motivation
+      description: What reading or organizing workflow feels slow, missing, or awkward today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Design
+      description: Describe how you envision this feature working.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: alignment
+    attributes:
+      label: Local-First Alignment
+      options:
+        - label: This feature works 100% offline without requiring accounts or cloud services.
+        - label: I would be interested in helping implement this via a Pull Request.

@@ -1,21 +1,34 @@
 appId: dev.sms.alexandria
 productName: Alexandria
+copyright: Copyright © 2026 Alexandria Contributors
 directories:
   output: release
   buildResources: build
 files:
   - out/**
   - package.json
+  - '!**/*.map'
 asar: true
+asarUnpack:
+  - '**/*.node'
+  - node_modules/@napi-rs/**
+npmRebuild: false
+publish: null
+
 linux:
   target:
-    - AppImage
-    - deb
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  artifactName: Alexandria-${version}-linux-${arch}.${ext}
   category: Office
   icon: build/icon.png
   executableName: alexandria
   synopsis: A local-first 3D library for your PDFs
-  description: Alexandria keeps a curated PDF library in a dark-academia reading room, with a full-screen reader, non-destructive annotations, and local music.
+  description: Alexandria keeps a curated PDF library in a classical 3D Grand Hall reading room, with a full-screen reader, non-destructive annotations, and ambient soundscapes.
   desktop:
     entry:
       Name: Alexandria
@@ -23,3 +36,39 @@ linux:
       Categories: Office;Graphics;
       Keywords: pdf;library;reader;books;notes;
       StartupWMClass: Alexandria
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  icon: build/icon.ico
+  signAndEditExecutable: true
+
+nsis:
+  artifactName: Alexandria-${version}-win-${arch}-setup.${ext}
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Alexandria
+  deleteAppDataOnUninstall: false
+
+portable:
+  artifactName: Alexandria-${version}-win-${arch}-portable.${ext}
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  artifactName: Alexandria-${version}-mac-${arch}.${ext}
+  icon: build/icon.png
+  category: public.app-category.productivity
+  identity: null

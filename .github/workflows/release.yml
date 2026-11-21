@@ -1,0 +1,274 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Optional release tag (e.g. v0.2.0). Leave empty to update the rolling latest release.'
+        required: false
+        default: ''
+
+# Cancel older superseded branch runs, but never cancel tagged releases
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Verify & Resolve Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      is_rolling: ${{ steps.meta.outputs.is_rolling }}
+      release_title: ${{ steps.meta.outputs.release_title }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build web bundle
+        run: npm run build
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          INPUT_TAG="${{ inputs.tag }}"
+
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#v}"
+            IS_ROLLING="false"
+            TITLE="Alexandria ${TAG}"
+          elif [[ -n "${INPUT_TAG}" ]]; then
+            TAG="${INPUT_TAG}"
+            VERSION="${TAG#v}"
+            IS_ROLLING="false"
+            TITLE="Alexandria ${TAG}"
+          else
+            TAG="latest"
+            VERSION="${PKG_VERSION}"
+            IS_ROLLING="true"
+            TITLE="Alexandria Latest (v${PKG_VERSION})"
+          fi
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "is_rolling=${IS_ROLLING}" >> "$GITHUB_OUTPUT"
+          echo "release_title=${TITLE}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Package (${{ matrix.platform }})
+    needs: verify
+    fail-fast: false
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    strategy:
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-latest
+            builder_args: '--linux AppImage deb --x64 --publish never'
+            artifact_pattern: |
+              release/*.AppImage
+              release/*.deb
+          - platform: windows
+            os: windows-latest
+            builder_args: '--win nsis portable --x64 --publish never'
+            artifact_pattern: |
+              release/*-setup.exe
+              release/*-portable.exe
+          - platform: macos
+            os: macos-latest
+            builder_args: '--mac dmg zip --arm64 --publish never'
+            artifact_pattern: |
+              release/*.dmg
+              release/*.zip
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Sync version for tagged release
+        if: needs.verify.outputs.is_rolling == 'false'
+        shell: bash
+        run: |
+          VERSION="${{ needs.verify.outputs.version }}"
+          if [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]]; then
+            npm version "${VERSION}" --no-git-tag-version --allow-same-version
+          fi
+
+      - name: Build Electron application
+        run: npm run build:electron
+
+      - name: Package desktop installers
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder ${{ matrix.builder_args }}
+
+      - name: Upload packaged artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: ${{ matrix.artifact_pattern }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-release
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        shell: bash
+        working-directory: dist-release
+        run: |
+          shopt -s nullglob
+          FILES=(*.AppImage *.deb *.exe *.dmg *.zip)
+          if [[ ${#FILES[@]} -eq 0 ]]; then
+            echo "No release binaries found to publish!" >&2
+            exit 1
+          fi
+          sha256sum "${FILES[@]}" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BUILD_DATE="$(date -u +'%Y-%m-%d %H:%M UTC')"
+          TAG="${{ needs.verify.outputs.tag }}"
+          VERSION="${{ needs.verify.outputs.version }}"
+          IS_ROLLING="${{ needs.verify.outputs.is_rolling }}"
+
+          {
+            if [[ "${IS_ROLLING}" == "true" ]]; then
+              echo "Automated rolling desktop build from \`${GITHUB_REF_NAME}\` (\`${SHORT_SHA}\`) — built ${BUILD_DATE}."
+            else
+              echo "Desktop release **${TAG}** (\`${SHORT_SHA}\`) — built ${BUILD_DATE}."
+            fi
+            echo ""
+            echo "### Downloads"
+            echo ""
+            echo "| Platform | Format | File |"
+            echo "| :--- | :--- | :--- |"
+            for file in dist-release/*.AppImage; do
+              [[ -e "$file" ]] && echo "| Linux (x64) | AppImage (portable) | \`$(basename "$file")\` |"
+            done
+            for file in dist-release/*.deb; do
+              [[ -e "$file" ]] && echo "| Linux (x64) | Debian / Ubuntu package | \`$(basename "$file")\` |"
+            done
+            for file in dist-release/*-setup.exe; do
+              [[ -e "$file" ]] && echo "| Windows (x64) | Installer (.exe) | \`$(basename "$file")\` |"
+            done
+            for file in dist-release/*-portable.exe; do
+              [[ -e "$file" ]] && echo "| Windows (x64) | Portable (.exe) | \`$(basename "$file")\` |"
+            done
+            for file in dist-release/*.dmg; do
+              [[ -e "$file" ]] && echo "| macOS (Apple Silicon) | Disk Image (.dmg) | \`$(basename "$file")\` |"
+            done
+            for file in dist-release/*.zip; do
+              [[ -e "$file" ]] && echo "| macOS (Apple Silicon) | Archive (.zip) | \`$(basename "$file")\` |"
+            done
+            echo ""
+            echo "Verify downloads against \`SHA256SUMS.txt\`. On Linux, make the AppImage executable before running: \`chmod +x Alexandria-*.AppImage\`."
+          } > release-notes.md
+
+      - name: Move rolling latest tag to current commit
+        if: needs.verify.outputs.is_rolling == 'true'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f latest "${GITHUB_SHA}"
+          git push -f origin refs/tags/latest
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          TAG="${{ needs.verify.outputs.tag }}"
+          TITLE="${{ needs.verify.outputs.release_title }}"
+          IS_ROLLING="${{ needs.verify.outputs.is_rolling }}"
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            if [[ "${IS_ROLLING}" == "true" ]]; then
+              # Remove stale assets from older versions so the rolling release stays clean
+              OLD_ASSETS="$(gh release view "${TAG}" --json assets --jq '.assets[].name')"
+              for asset in ${OLD_ASSETS}; do
+                gh release delete-asset "${TAG}" "${asset}" --yes || true
+              done
+            fi
+            gh release upload "${TAG}" dist-release/* --clobber
+            gh release edit "${TAG}" \
+              --title "${TITLE}" \
+              --notes-file release-notes.md \
+              --latest
+          else
+            if [[ "${IS_ROLLING}" == "true" ]]; then
+              gh release create "${TAG}" dist-release/* \
+                --title "${TITLE}" \
+                --notes-file release-notes.md \
+                --latest
+            else
+              gh release create "${TAG}" dist-release/* \
+                --title "${TITLE}" \
+                --notes-file release-notes.md \
+                --generate-notes \
+                --latest
+            fi
+          fi

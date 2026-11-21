@@ -1,0 +1,78 @@
+name: Deploy Landing Page to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; let active deploys complete cleanly
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Landing Page & Static Web Demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Setup GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck & Lint
+        run: |
+          npm run typecheck
+          npm run lint
+
+      - name: Build Landing Page and Static Demo
+        shell: bash
+        env:
+          VITE_GITHUB_REPO: ${{ github.repository }}
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          # User/org root pages (<user>.github.io) deploy at "/", project pages deploy at "/<repo>/"
+          if [[ "${REPO_NAME,,}" == "${GITHUB_REPOSITORY_OWNER,,}.github.io" ]]; then
+            export VITE_PAGES_BASE="/"
+          else
+            export VITE_PAGES_BASE="/${REPO_NAME}/"
+          fi
+          echo "Building GitHub Pages bundle for ${VITE_GITHUB_REPO} with base=${VITE_PAGES_BASE}"
+          npm run build:pages
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist-pages
+
+  deploy:
+    name: Deploy to GitHub Pages
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

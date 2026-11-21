@@ -606,21 +606,53 @@ async function startServer(): Promise<void> {
     }
   })
 
+  const pagesDir = resolve(ROOT_DIR, 'dist-pages')
   const distDir = resolve(ROOT_DIR, 'dist')
-  const isProd = process.env.NODE_ENV === 'production' && existsSync(join(distDir, 'index.html'))
+  const isProd = process.env.NODE_ENV === 'production'
 
-  if (isProd) {
+  app.use((req, res, next) => {
+    if (req.originalUrl === '/demo') {
+      res.redirect(302, '/demo/')
+      return
+    }
+    next()
+  })
+
+  if (isProd && existsSync(join(pagesDir, 'index.html'))) {
+    app.use('/demo', express.static(join(pagesDir, 'demo')))
+    app.get('/demo/*', (_req, res) => {
+      res.sendFile(join(pagesDir, 'demo', 'index.html'))
+    })
+    app.use(express.static(pagesDir))
+    app.get('*', (_req, res) => {
+      res.sendFile(join(pagesDir, 'index.html'))
+    })
+  } else if (isProd && existsSync(join(distDir, 'index.html'))) {
     app.use(express.static(distDir))
     app.get('*', (_req, res) => {
       res.sendFile(join(distDir, 'index.html'))
     })
   } else {
-    const vite = await createViteServer({
+    const viteDemo = await createViteServer({
       configFile: resolve(ROOT_DIR, 'vite.config.ts'),
-      server: { middlewareMode: true },
+      base: '/demo/',
+      server: { middlewareMode: true, hmr: false },
       appType: 'spa'
     })
-    app.use(vite.middlewares)
+    const viteLanding = await createViteServer({
+      configFile: resolve(ROOT_DIR, 'vite.landing.config.ts'),
+      base: '/',
+      server: { middlewareMode: true, hmr: false },
+      appType: 'spa'
+    })
+
+    app.use((req, res, next) => {
+      if (req.url.startsWith('/demo/')) {
+        viteDemo.middlewares(req, res, next)
+        return
+      }
+      viteLanding.middlewares(req, res, next)
+    })
   }
 
   app.listen(PORT, HOST, () => {

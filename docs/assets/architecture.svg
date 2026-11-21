@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 440" width="1200" height="440" role="img" aria-label="Alexandria Local-First System Architecture Diagram">
+  <defs>
+    <marker id="arrowBrass" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 Z" fill="#C8A25B" />
+    </marker>
+    <linearGradient id="layerBg" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#16120F" />
+      <stop offset="100%" stop-color="#100D0B" />
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="440" rx="12" fill="#090807" />
+  <rect x="1" y="1" width="1198" height="438" rx="11" fill="none" stroke="#C8A25B" stroke-opacity="0.24" stroke-width="1" />
+
+  <text x="36" y="38" fill="#C8A25B" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" letter-spacing="2.8">
+    LOCAL-FIRST SYSTEM ARCHITECTURE
+  </text>
+  <text x="1164" y="38" text-anchor="end" fill="#8E8474" font-family="ui-monospace, Menlo, monospace" font-size="11">
+    ZERO CLOUD DEPENDENCIES · SINGLE TYPED API CONTRACT
+  </text>
+
+  <!-- Tier 1: Renderer UI -->
+  <g transform="translate(36, 58)">
+    <rect width="1128" height="92" rx="6" fill="url(#layerBg)" stroke="#C8A25B" stroke-opacity="0.34" stroke-width="1.1" />
+    <text x="20" y="26" fill="#E3C27F" font-family="ui-monospace, Menlo, monospace" font-size="10.5" letter-spacing="1.6">
+      PRESENTATION LAYER · REACT 19 + TYPESCRIPT + ZUSTAND
+    </text>
+
+    <rect x="20" y="38" width="250" height="40" rx="4" fill="#1D1712" stroke="#C8A25B" stroke-opacity="0.28" />
+    <text x="34" y="56" fill="#F5EFE4" font-family="Georgia, serif" font-size="15">3D Grand Hall (Three.js)</text>
+    <text x="34" y="71" fill="#9E9484" font-family="ui-monospace, Menlo, monospace" font-size="9.5">Mezzanine · Themes · Audio</text>
+
+    <rect x="292" y="38" width="256" height="40" rx="4" fill="#1D1712" stroke="#C8A25B" stroke-opacity="0.28" />
+    <text x="306" y="56" fill="#F5EFE4" font-family="Georgia, serif" font-size="15">Precision Reader (PDF.js)</text>
+    <text x="306" y="71" fill="#9E9484" font-family="ui-monospace, Menlo, monospace" font-size="9.5">Offscreen Canvas · Ink · Study</text>
+
+    <rect x="570" y="38" width="254" height="40" rx="4" fill="#1D1712" stroke="#C8A25B" stroke-opacity="0.28" />
+    <text x="584" y="56" fill="#F5EFE4" font-family="Georgia, serif" font-size="15">Floor Map &amp; Librarian</text>
+    <text x="584" y="71" fill="#9E9484" font-family="ui-monospace, Menlo, monospace" font-size="9.5">Shelves · Tags · Desk · Relink</text>
+
+    <rect x="846" y="38" width="262" height="40" rx="4" fill="#1D1712" stroke="#C8A25B" stroke-opacity="0.28" />
+    <text x="860" y="56" fill="#F5EFE4" font-family="Georgia, serif" font-size="15">Global Search &amp; Audio Dock</text>
+    <text x="860" y="71" fill="#9E9484" font-family="ui-monospace, Menlo, monospace" font-size="9.5">Ctrl/Cmd+K · Local Music</text>
+  </g>
+
+  <!-- Connector Arrows Tier 1 -> Tier 2 -->
+  <line x1="220" y1="150" x2="220" y2="178" stroke="#C8A25B" stroke-width="1.4" marker-end="url(#arrowBrass)" />
+  <line x1="600" y1="150" x2="600" y2="178" stroke="#C8A25B" stroke-width="1.4" marker-end="url(#arrowBrass)" />
+  <line x1="980" y1="150" x2="980" y2="178" stroke="#C8A25B" stroke-width="1.4" marker-end="url(#arrowBrass)" />
+
+  <!-- Tier 2: Runtime Adapters -->
+  <g transform="translate(36, 182)">
+    <rect width="1128" height="68" rx="6" fill="#120F0C" stroke="#C8A25B" stroke-opacity="0.48" stroke-width="1.2" />
+    <text x="20" y="23" fill="#C8A25B" font-family="ui-monospace, Menlo, monospace" font-size="10.5" letter-spacing="1.6">
+      TYPED CONTRACT · window.alexandria (src/shared/api.ts)
+    </text>
+    <text x="20" y="49" fill="#F2ECE1" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">
+      Desktop: Electron Preload contextBridge + alexandria:// media protocol
+    </text>
+    <text x="530" y="49" fill="#C8A25B" font-family="ui-monospace, Menlo, monospace" font-size="12">·</text>
+    <text x="550" y="49" fill="#D5CBB9" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">
+      Local Web: Express /api/rpc
+    </text>
+    <text x="760" y="49" fill="#C8A25B" font-family="ui-monospace, Menlo, monospace" font-size="12">·</text>
+    <text x="780" y="49" fill="#A29889" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">
+      GitHub Pages: Static Browser Demo Adapter
+    </text>
+  </g>
+
+  <!-- Connector Arrows Tier 2 -> Tier 3 -->
+  <line x1="310" y1="250" x2="310" y2="280" stroke="#C8A25B" stroke-width="1.4" marker-end="url(#arrowBrass)" />
+  <line x1="890" y1="250" x2="890" y2="280" stroke="#C8A25B" stroke-width="1.4" marker-end="url(#arrowBrass)" />
+
+  <!-- Tier 3 Left: Core Local Services -->
+  <g transform="translate(36, 284)">
+    <rect width="548" height="122" rx="6" fill="url(#layerBg)" stroke="#C8A25B" stroke-opacity="0.3" stroke-width="1.1" />
+    <text x="20" y="26" fill="#E3C27F" font-family="ui-monospace, Menlo, monospace" font-size="10.5" letter-spacing="1.6">
+      CORE LOCAL ENGINE (src/main)
+    </text>
+    <text x="20" y="54" fill="#F5EFE4" font-family="Georgia, serif" font-size="16">SQLite + FTS5 Search · SHA-256 Importer</text>
+    <text x="20" y="78" fill="#B5AB9C" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">
+      • Extracts PDF text, metadata &amp; covers via @napi-rs/canvas + pdfjs-dist
+    </text>
+    <text x="20" y="100" fill="#B5AB9C" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">
+      • Optional LibreOffice bridge converts DOCX, PPTX, ODT, ODP cleanly
+    </text>
+  </g>
+
+  <!-- Connector Horizontal Engine <-> Disk -->
+  <line x1="584" y1="345" x2="612" y2="345" stroke="#C8A25B" stroke-width="1.4" marker-end="url(#arrowBrass)" />
+
+  <!-- Tier 3 Right: Plain Folder Storage -->
+  <g transform="translate(616, 284)">
+    <rect width="548" height="122" rx="6" fill="url(#layerBg)" stroke="#C8A25B" stroke-opacity="0.45" stroke-width="1.2" />
+    <text x="20" y="26" fill="#E3C27F" font-family="ui-monospace, Menlo, monospace" font-size="10.5" letter-spacing="1.6">
+      USER-OWNED PLAIN FOLDER (~/Alexandria/)
+    </text>
+    <text x="20" y="54" fill="#F5EFE4" font-family="ui-monospace, Menlo, monospace" font-size="13.5">
+      library.db      config.json      books/      covers/      thumbs/
+    </text>
+    <text x="20" y="80" fill="#B5AB9C" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">
+      • Non-destructive annotations keep your original PDFs 100% untouched
+    </text>
+    <text x="20" y="102" fill="#B5AB9C" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13">
+      • Portable across machines via rsync, Syncthing, or Time Machine
+    </text>
+  </g>
+</svg>
