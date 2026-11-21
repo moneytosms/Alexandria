@@ -98,7 +98,7 @@ export function resolveRepositorySlug(): string {
 }
 
 export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '—'
+  if (!Number.isFinite(bytes) || bytes <= 0) return '-'
   const mb = bytes / (1024 * 1024)
   if (mb >= 1) return `${mb.toFixed(1)} MB`
   const kb = bytes / 1024

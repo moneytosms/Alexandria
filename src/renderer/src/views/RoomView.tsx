@@ -17,6 +17,7 @@ import {
   type HallMood,
   type HallTheme
 } from '../room/atmosphere'
+import { MovementInputController, normalizeMoveKey } from '../room/controls'
 import {
   EYE_HEIGHT,
   GALLERY_Y,
@@ -651,6 +652,12 @@ export function RoomView({ library }: Props) {
   const settingsOpen = useUiStore((state) => state.settingsOpen)
   const tipsOpen = useUiStore((state) => state.tipsOpen)
 
+  // In-Hall New Wing Builder state
+  const [newWingOpen, setNewWingOpen] = useState(false)
+  const [newWingName, setNewWingName] = useState('')
+  const [newWingWall, setNewWingWall] = useState<Wall>('east')
+  const [creatingWing, setCreatingWing] = useState(false)
+
   useEffect(() => {
     popoverOpenRef.current = placesOpen || atmosphereOpen
   }, [placesOpen, atmosphereOpen])
@@ -658,16 +665,10 @@ export function RoomView({ library }: Props) {
   useEffect(() => {
     const blocked = Boolean(previewBook || searchOpen || settingsOpen || tipsOpen)
     modalOpenRef.current = blocked
-    if (blocked || deskOpen || openShelfId !== null) {
+    if (blocked || deskOpen || openShelfId !== null || placesOpen || atmosphereOpen || newWingOpen) {
       clearKeysRef.current?.()
     }
-  }, [previewBook, searchOpen, settingsOpen, tipsOpen, deskOpen, openShelfId])
-
-  // In-Hall New Wing Builder state
-  const [newWingOpen, setNewWingOpen] = useState(false)
-  const [newWingName, setNewWingName] = useState('')
-  const [newWingWall, setNewWingWall] = useState<Wall>('east')
-  const [creatingWing, setCreatingWing] = useState(false)
+  }, [previewBook, searchOpen, settingsOpen, tipsOpen, deskOpen, openShelfId, placesOpen, atmosphereOpen, newWingOpen])
 
   const room = useMemo<Room | null>(() => {
     const direct = floors
@@ -1021,9 +1022,9 @@ export function RoomView({ library }: Props) {
 
     const raycaster = new THREE.Raycaster()
     const pointerNdc = new THREE.Vector2(0, 0)
-    const keys = new Set<string>()
+    const input = new MovementInputController()
     clearKeysRef.current = () => {
-      keys.clear()
+      input.clear()
       isDragging = false
     }
     let isDragging = false
@@ -1428,13 +1429,13 @@ export function RoomView({ library }: Props) {
 
     const onContextMenu = (event: MouseEvent): void => {
       event.preventDefault()
-      keys.clear()
+      input.clear()
     }
 
     const onPointerLockChange = (): void => {
       const locked = document.pointerLockElement === renderer.domElement
       setFpsActive(locked)
-      keys.clear()
+      input.clear()
       isDragging = false
       if (!locked) {
         renderer.domElement.style.cursor = 'grab'
@@ -1453,24 +1454,6 @@ export function RoomView({ library }: Props) {
       }
     }
 
-    const normalizeMoveKey = (event: KeyboardEvent): string | null => {
-      const k = event.key.toLowerCase()
-      if (event.code === 'KeyW' || k === 'w') return 'W'
-      if (event.code === 'KeyA' || k === 'a') return 'A'
-      if (event.code === 'KeyS' || k === 's') return 'S'
-      if (event.code === 'KeyD' || k === 'd') return 'D'
-      if (event.code === 'KeyQ' || k === 'q') return 'Q'
-      if (event.code === 'KeyE' || k === 'e') return 'E'
-      if (event.code === 'ArrowUp' || event.key === 'ArrowUp') return 'Up'
-      if (event.code === 'ArrowDown' || event.key === 'ArrowDown') return 'Down'
-      if (event.code === 'ArrowLeft' || event.key === 'ArrowLeft') return 'Left'
-      if (event.code === 'ArrowRight' || event.key === 'ArrowRight') return 'Right'
-      if (event.code === 'ShiftLeft' || event.code === 'ShiftRight' || event.key === 'Shift') {
-        return 'Shift'
-      }
-      return null
-    }
-
     let anchorIndex = 0
     const onKeyDown = (event: KeyboardEvent): void => {
       const el = event.target as HTMLElement | null
@@ -1483,10 +1466,14 @@ export function RoomView({ library }: Props) {
       ) {
         return
       }
-      if (event.metaKey || event.ctrlKey || event.altKey) return
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        input.clear()
+        return
+      }
 
       const ui = useUiStore.getState()
       if (modalOpenRef.current || ui.searchOpen || ui.settingsOpen || ui.tipsOpen) {
+        input.clear()
         return
       }
 
@@ -1505,6 +1492,12 @@ export function RoomView({ library }: Props) {
           return
         }
         if (
+          document.activeElement instanceof HTMLButtonElement ||
+          document.activeElement instanceof HTMLAnchorElement
+        ) {
+          document.activeElement.blur()
+        }
+        if (
           moveToken === 'Up' ||
           moveToken === 'Down' ||
           moveToken === 'Left' ||
@@ -1512,7 +1505,7 @@ export function RoomView({ library }: Props) {
         ) {
           event.preventDefault()
         }
-        keys.add(moveToken)
+        input.onKeyDown(moveToken, performance.now(), event.repeat)
         if (moveToken !== 'Shift') cancelGlide()
         return
       }
@@ -1619,6 +1612,7 @@ export function RoomView({ library }: Props) {
       }
 
       if (code === 'Escape') {
+        input.clear()
         openShelf(null)
         setDeskOpen(false)
         setPlacesOpen(false)
@@ -1629,17 +1623,17 @@ export function RoomView({ library }: Props) {
 
     const onKeyUp = (event: KeyboardEvent): void => {
       const moveToken = normalizeMoveKey(event)
-      if (moveToken) keys.delete(moveToken)
+      if (moveToken) input.onKeyUp(moveToken, performance.now())
     }
 
     const onWindowBlur = (): void => {
-      keys.clear()
+      input.clear()
       isDragging = false
     }
 
     const onVisibilityChange = (): void => {
+      input.clear()
       if (document.hidden) {
-        keys.clear()
         isDragging = false
       }
     }
@@ -1653,7 +1647,8 @@ export function RoomView({ library }: Props) {
     document.addEventListener('pointerlockchange', onPointerLockChange)
     document.addEventListener('visibilitychange', onVisibilityChange)
     window.addEventListener('keydown', onKeyDown)
-    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('keyup', onKeyUp, true)
+    document.addEventListener('keyup', onKeyUp, true)
     window.addEventListener('blur', onWindowBlur)
 
     const resize = (): void => {
@@ -1704,6 +1699,8 @@ export function RoomView({ library }: Props) {
       }
     }
 
+    let wasMoving = false
+
     const tick = (): void => {
       if (disposed) return
       const now = performance.now()
@@ -1718,19 +1715,16 @@ export function RoomView({ library }: Props) {
       avgFrameMs = avgFrameMs * 0.9 + dt * 1000 * 0.1
 
       // 1. WASD / Arrow first-person walking with continuous staircase & mezzanine elevation physics
-      const moveForward =
-        (keys.has('W') || keys.has('Up') ? 1 : 0) - (keys.has('S') || keys.has('Down') ? 1 : 0)
-      const moveRight =
-        (keys.has('D') || keys.has('Right') ? 1 : 0) - (keys.has('A') || keys.has('Left') ? 1 : 0)
-      const turnInput = (keys.has('Q') ? 1 : 0) - (keys.has('E') ? 1 : 0)
+      const sample = input.sample(now)
+      const { moveForward, moveRight, turnInput, sprint, isMoving, tapOnly } = sample
 
       if (turnInput !== 0 && document.pointerLockElement !== renderer.domElement) {
         targetYaw += turnInput * 1.95 * dt
       }
 
-      const isMoving = moveForward !== 0 || moveRight !== 0
       if (isMoving) {
-        const speed = keys.has('Shift') ? 5.8 : 3.6
+        const speed = sprint ? 5.8 : 3.6
+        const stepDt = tapOnly ? Math.max(dt, 0.055) : dt
         const len = Math.hypot(moveForward, moveRight) || 1
         const f = moveForward / len
         const r = moveRight / len
@@ -1739,11 +1733,15 @@ export function RoomView({ library }: Props) {
         const rightX = Math.cos(yaw)
         const rightZ = -Math.sin(yaw)
         const resolved = resolveWalkPosition(targetFloor, {
-          x: targetFloor.x + (forwardX * f + rightX * r) * speed * dt,
-          z: targetFloor.z + (forwardZ * f + rightZ * r) * speed * dt
+          x: targetFloor.x + (forwardX * f + rightX * r) * speed * stepDt,
+          z: targetFloor.z + (forwardZ * f + rightZ * r) * speed * stepDt
         })
         targetFloor.set(resolved.x, resolved.y, resolved.z)
+      } else if (wasMoving && !glide) {
+        // Stop crisply when walking keys are released so movement never drifts
+        targetFloor.lerp(playerFloor, 0.72)
       }
+      wasMoving = isMoving
 
       // 2. Smooth double-click / waypoint glide (including between Ground and Mezzanine!)
       if (glide) {
@@ -1763,8 +1761,8 @@ export function RoomView({ library }: Props) {
       }
 
       // 3. Crisp responsive damping for manual walk & silky glide for waypoints
-      const posLambda = glide ? 5.5 : 18
-      const yLambda = glide ? 5.5 : 16
+      const posLambda = glide ? 5.5 : 22
+      const yLambda = glide ? 5.5 : 18
       const rotLambda = 14
       playerFloor.x = THREE.MathUtils.damp(playerFloor.x, targetFloor.x, posLambda, dt)
       playerFloor.y = THREE.MathUtils.damp(playerFloor.y, targetFloor.y, yLambda, dt)
@@ -1960,8 +1958,10 @@ export function RoomView({ library }: Props) {
       document.removeEventListener('pointerlockchange', onPointerLockChange)
       document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('keyup', onKeyUp, true)
+      document.removeEventListener('keyup', onKeyUp, true)
       window.removeEventListener('blur', onWindowBlur)
+      input.clear()
       clearKeysRef.current = null
 
       hoverBoxGeo.dispose()

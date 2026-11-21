@@ -369,7 +369,7 @@ function createParchmentLeafTexture(side: 'left' | 'right'): THREE.CanvasTexture
     ctx.textAlign = 'center'
     ctx.fillText('ZENITH · XC°', cx, cy - 134)
     ctx.fillText('NADIR · CCLXX°', cx, cy + 144)
-    ctx.fillText('FIG. I — ARMILLARY PROJECTION', cx, 608)
+    ctx.fillText('FIG. I · ARMILLARY PROJECTION', cx, 608)
   } else {
     // Right leaf: crisp editorial text + warm gold & emerald highlights + freehand ink marginalia
     ctx.fillStyle = '#251d14'
