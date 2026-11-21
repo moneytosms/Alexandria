@@ -13,6 +13,7 @@ on:
         description: 'Optional release tag (e.g. v0.2.0). Leave empty to update the rolling latest release.'
         required: false
         default: ''
+        type: string
 
 # Cancel older superseded branch runs, but never cancel tagged releases
 concurrency:
@@ -60,9 +61,10 @@ jobs:
       - name: Resolve release metadata
         id: meta
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           PKG_VERSION="$(node -p "require('./package.json').version")"
-          INPUT_TAG="${{ inputs.tag }}"
 
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
@@ -89,11 +91,11 @@ jobs:
   build:
     name: Package (${{ matrix.platform }})
     needs: verify
-    fail-fast: false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
 
     strategy:
+      fail-fast: false
       matrix:
         include:
           - platform: linux
