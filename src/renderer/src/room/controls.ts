@@ -80,8 +80,8 @@ export class MovementInputController {
     initialRepeatTimeoutMs?: number
     repeatHeartbeatTimeoutMs?: number
   }) {
-    this.initialRepeatTimeoutMs = options?.initialRepeatTimeoutMs ?? 720
-    this.repeatHeartbeatTimeoutMs = options?.repeatHeartbeatTimeoutMs ?? 360
+    this.initialRepeatTimeoutMs = options?.initialRepeatTimeoutMs ?? 1150
+    this.repeatHeartbeatTimeoutMs = options?.repeatHeartbeatTimeoutMs ?? 450
   }
 
   onKeyDown(token: MoveKey, now: number, isRepeat = false): void {

@@ -190,9 +190,15 @@ function seedInitialData(): DemoState {
 
   return {
     settings: {
+      'import.destination': 'shelf',
+      'import.storage': 'copy',
+      'ui.quality': 'auto',
+      'ui.reducedMotion': 'false',
+      'sound.enabled': 'true',
+      'sound.volume': '0.3',
+      'music.folders': '[]',
       'hall.theme': 'dark-academia',
-      'hall.weather': 'clear',
-      'hall.timeOfDay': 'dusk',
+      'hall.mood': 'dusk',
       'welcome.dismissed': '1'
     },
     floors,

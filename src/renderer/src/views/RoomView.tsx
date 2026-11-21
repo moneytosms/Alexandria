@@ -1646,9 +1646,8 @@ export function RoomView({ library }: Props) {
     renderer.domElement.addEventListener('contextmenu', onContextMenu)
     document.addEventListener('pointerlockchange', onPointerLockChange)
     document.addEventListener('visibilitychange', onVisibilityChange)
-    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDown, true)
     window.addEventListener('keyup', onKeyUp, true)
-    document.addEventListener('keyup', onKeyUp, true)
     window.addEventListener('blur', onWindowBlur)
 
     const resize = (): void => {
@@ -1700,6 +1699,7 @@ export function RoomView({ library }: Props) {
     }
 
     let wasMoving = false
+    let wasTapOnly = false
 
     const tick = (): void => {
       if (disposed) return
@@ -1724,7 +1724,7 @@ export function RoomView({ library }: Props) {
 
       if (isMoving) {
         const speed = sprint ? 5.8 : 3.6
-        const stepDt = tapOnly ? Math.max(dt, 0.055) : dt
+        const stepDt = tapOnly ? Math.max(dt, 0.095) : dt
         const len = Math.hypot(moveForward, moveRight) || 1
         const f = moveForward / len
         const r = moveRight / len
@@ -1737,11 +1737,12 @@ export function RoomView({ library }: Props) {
           z: targetFloor.z + (forwardZ * f + rightZ * r) * speed * stepDt
         })
         targetFloor.set(resolved.x, resolved.y, resolved.z)
-      } else if (wasMoving && !glide) {
-        // Stop crisply when walking keys are released so movement never drifts
-        targetFloor.lerp(playerFloor, 0.72)
+      } else if (wasMoving && !wasTapOnly && !glide) {
+        // Stop crisply when releasing a sustained hold while preserving quick single-tap steps
+        targetFloor.lerp(playerFloor, 0.55)
       }
       wasMoving = isMoving
+      wasTapOnly = tapOnly
 
       // 2. Smooth double-click / waypoint glide (including between Ground and Mezzanine!)
       if (glide) {
@@ -1957,9 +1958,8 @@ export function RoomView({ library }: Props) {
       renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored)
       document.removeEventListener('pointerlockchange', onPointerLockChange)
       document.removeEventListener('visibilitychange', onVisibilityChange)
-      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keydown', onKeyDown, true)
       window.removeEventListener('keyup', onKeyUp, true)
-      document.removeEventListener('keyup', onKeyUp, true)
       window.removeEventListener('blur', onWindowBlur)
       input.clear()
       clearKeysRef.current = null
