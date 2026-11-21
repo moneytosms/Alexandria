@@ -52,4 +52,27 @@ describe('Grand Hall staircase & mezzanine physics', () => {
     expect(stairHeightAt(6.3, STAIR_SPEC.f2EndZ)).toBeCloseTo(GALLERY_Y, 2)
     expect(ROOM_WIDTH).toBe(16)
   })
+
+  it('allows unobstructed rightward walking (D / +X) from the entrance foyer', () => {
+    let pos = { x: 0, y: 0, z: 4.45 }
+    for (let step = 0; step < 30; step += 1) {
+      const next = resolveWalkPosition(pos, { x: pos.x + 0.18, z: pos.z })
+      expect(next.x).toBeGreaterThan(pos.x)
+      expect(next.y).toBe(0)
+      pos = next
+    }
+    expect(pos.x).toBeGreaterThan(4.5)
+  })
+
+  it('transitions smoothly onto Flight 1 from y = 0 without snagging at the stair mouth', () => {
+    let pos = { x: 2.2, y: 0, z: 5.65 }
+    for (let step = 0; step < 12; step += 1) {
+      const next = resolveWalkPosition(pos, { x: pos.x + 0.15, z: pos.z })
+      expect(next.x).toBeGreaterThan(pos.x)
+      pos = next
+    }
+    expect(pos.x).toBeGreaterThan(3.8)
+    expect(pos.y).toBeGreaterThan(0.5)
+  })
 })
+

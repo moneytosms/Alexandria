@@ -170,9 +170,9 @@ export function resolveWalkPosition(
   }
 
   // Case B: Mid-staircase (between ground and upper mezzanine)
-  if (current.y > 0.22) {
+  if (current.y > 0.03) {
     // Stepping back down onto ground floor at bottom of Flight 1
-    if (x < s.f1StartX && z >= s.f1MinZ - 0.2 && z <= s.f1MaxZ + 0.2) {
+    if (x < s.f1StartX && z >= s.f1MinZ - 0.25 && z <= s.f1MaxZ + 0.25) {
       return { x, y: 0, z }
     }
     // Stepping up onto East Mezzanine at top of Flight 2
@@ -201,28 +201,28 @@ export function resolveWalkPosition(
     return { x, y: h ?? current.y, z }
   }
 
-  // Case C: Ground floor nave (y <= 0.22)
+  // Case C: Ground floor nave (y <= 0.03)
   // Check if player is walking into the open bottom mouth of Flight 1
   const atFlight1Mouth =
     x >= s.f1StartX - 0.05 &&
-    x <= s.f1StartX + 0.95 &&
-    z >= s.f1MinZ + 0.05 &&
-    z <= s.f1MaxZ - 0.05 &&
-    current.x <= s.f1StartX + 0.6
+    x <= s.f1EndX &&
+    z >= s.f1MinZ &&
+    z <= s.f1MaxZ &&
+    current.x <= s.f1StartX + 0.85
 
   if (atFlight1Mouth) {
     z = clamp(z, s.f1MinZ + 0.14, s.f1MaxZ - 0.14)
     const h = stairHeightAt(x, z) ?? 0
-    return { x, y: h, z }
+    return { x, y: Math.max(h, x > s.f1StartX ? 0.04 : 0), z }
   }
 
   // Ground-level obstacles + solid under-staircase enclosure so player doesn't clip beneath stairs
   const groundBoxes: ObstacleBox[] = [
     ...HALL_OBSTACLES,
-    // Under Flight 1 (past mouth)
-    { x: 4.75, z: 5.68, halfX: 2.35, halfZ: 0.72 },
-    // Under Flight 2 (along South-East wall)
-    { x: 6.35, z: 3.1, halfX: 0.85, halfZ: 2.15 }
+    // Under Flight 1 (strictly south of z = 5.05 and east of x = 2.65 so foyer stays wide open)
+    { x: 4.9, z: 5.72, halfX: 2.25, halfZ: 0.67 },
+    // Under Flight 2 (along South-East wall, strictly east of x = 5.55)
+    { x: 6.38, z: 3.1, halfX: 0.82, halfZ: 2.05 }
   ]
 
   for (const box of groundBoxes) {

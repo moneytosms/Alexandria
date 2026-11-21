@@ -76,7 +76,6 @@ interface PageProps {
   onInk: (page: number, stroke: InkPoint[]) => void
   onErase: (annotation: Annotation) => void
   onOpenAnnotation: (annotation: Annotation) => void
-  settings: ReaderSettings
   searchQuery: string
 }
 
@@ -95,14 +94,26 @@ function PdfPage({
   onInk,
   onErase,
   onOpenAnnotation,
-  settings,
   searchQuery
 }: PageProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const textRef = useRef<HTMLDivElement | null>(null)
+  const highlightAnchorRef = useRef<{
+    x: number
+    y: number
+    clientX: number
+    clientY: number
+  } | null>(null)
+  const inkStartRef = useRef<{
+    lastClientX: number
+    lastClientY: number
+    totalDist: number
+  } | null>(null)
   const [scale, setScale] = useState(1)
+  const [pageSize, setPageSize] = useState<{ width: number; height: number } | null>(null)
   const [draftStroke, setDraftStroke] = useState<InkPoint[] | null>(null)
+  const [draftHighlight, setDraftHighlight] = useState<NormalizedRect | null>(null)
   const [menu, setMenu] = useState<{
     left: number
     top: number
@@ -111,8 +122,18 @@ function PdfPage({
   } | null>(null)
 
   useEffect(() => {
+    window.getSelection()?.removeAllRanges()
+    setMenu(null)
+    setDraftStroke(null)
+    setDraftHighlight(null)
+    highlightAnchorRef.current = null
+    inkStartRef.current = null
+  }, [tool, number])
+
+  useEffect(() => {
     let cancelled = false
     let textLayer: pdfjs.TextLayer | null = null
+    let renderTask: ReturnType<PDFPageProxy['render']> | null = null
 
     const render = async (): Promise<void> => {
       const page: PDFPageProxy = await pdf.getPage(number)
@@ -130,38 +151,63 @@ function PdfPage({
 
       nextScale = Math.max(0.1, Math.min(6, nextScale))
       const viewport = page.getViewport({ scale: nextScale, rotation })
+      const cssWidth = Math.max(1, Math.round(viewport.width))
+      const cssHeight = Math.max(1, Math.round(viewport.height))
       setScale(nextScale)
+      setPageSize((prev) =>
+        prev && prev.width === cssWidth && prev.height === cssHeight
+          ? prev
+          : { width: cssWidth, height: cssHeight }
+      )
+
+      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      const pixelWidth = Math.max(1, Math.round(cssWidth * dpr))
+      const pixelHeight = Math.max(1, Math.round(cssHeight * dpr))
+
+      // Render into an offscreen buffer first, then blit atomically to prevent blank flashes
+      const offscreen = document.createElement('canvas')
+      offscreen.width = pixelWidth
+      offscreen.height = pixelHeight
+      const offCtx = offscreen.getContext('2d')
+      if (!offCtx) return
+      offCtx.setTransform(pixelWidth / viewport.width, 0, 0, pixelHeight / viewport.height, 0, 0)
+      offCtx.fillStyle = '#ffffff'
+      offCtx.fillRect(0, 0, viewport.width, viewport.height)
+
+      renderTask = page.render({ canvasContext: offCtx, viewport, canvas: offscreen })
+      await renderTask.promise
+      if (cancelled) return
 
       const canvas = canvasRef.current
       if (!canvas) return
-      const dpr = Math.min(window.devicePixelRatio || 1, 2)
-      canvas.width = Math.floor(viewport.width * dpr)
-      canvas.height = Math.floor(viewport.height * dpr)
-      canvas.style.width = `${Math.floor(viewport.width)}px`
-      canvas.style.height = `${Math.floor(viewport.height)}px`
-
-      const context = canvas.getContext('2d')
-      if (!context) return
-      context.setTransform(dpr, 0, 0, dpr, 0, 0)
-      context.fillStyle = '#ffffff'
-      context.fillRect(0, 0, viewport.width, viewport.height)
-
-      await page.render({ canvasContext: context, viewport, canvas }).promise
-      if (cancelled) return
+      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.width = pixelWidth
+        canvas.height = pixelHeight
+      }
+      canvas.style.width = `${cssWidth}px`
+      canvas.style.height = `${cssHeight}px`
+      const displayCtx = canvas.getContext('2d')
+      if (displayCtx) {
+        displayCtx.setTransform(1, 0, 0, 1, 0, 0)
+        displayCtx.drawImage(offscreen, 0, 0)
+      }
 
       const textContainer = textRef.current
       if (textContainer) {
         textContainer.replaceChildren()
-        textContainer.style.width = `${viewport.width}px`
-        textContainer.style.height = `${viewport.height}px`
+        textContainer.style.width = `${cssWidth}px`
+        textContainer.style.height = `${cssHeight}px`
         textContainer.style.setProperty('--total-scale-factor', String(viewport.scale))
         textContainer.style.setProperty('--scale-factor', String(viewport.scale))
+        textContainer.style.setProperty('--scale-round-x', '1px')
+        textContainer.style.setProperty('--scale-round-y', '1px')
         textLayer = new pdfjs.TextLayer({
           textContentSource: page.streamTextContent(),
           container: textContainer,
           viewport
         })
         await textLayer.render()
+        if (cancelled) return
 
         const needle = searchQuery.trim().toLowerCase()
         if (needle.length > 1) {
@@ -178,28 +224,38 @@ function PdfPage({
 
     return () => {
       cancelled = true
+      renderTask?.cancel()
       textLayer?.cancel()
-      const canvas = canvasRef.current
-      if (canvas) {
-        canvas.width = 0
-        canvas.height = 0
-      }
     }
-  }, [pdf, number, containerWidth, containerHeight, fit, zoom, rotation, settings.theme, searchQuery])
+  }, [pdf, number, containerWidth, containerHeight, fit, zoom, rotation, searchQuery])
 
   const selectionRects = useCallback((): NormalizedRect[] => {
     const canvas = canvasRef.current
-    if (!canvas) return []
+    const textLayerEl = textRef.current
+    if (!canvas || !textLayerEl) return []
     const selection = window.getSelection()
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) return []
+    if (selection.toString().trim().length === 0) return []
 
     const frame = canvas.getBoundingClientRect()
+    if (frame.width < 10 || frame.height < 10) return []
+
     const rects: NormalizedRect[] = []
     for (let index = 0; index < selection.rangeCount; index += 1) {
       const range = selection.getRangeAt(index)
+      // Strictly scope to selections inside this page's textLayer
+      if (
+        !textLayerEl.contains(range.startContainer) &&
+        !textLayerEl.contains(range.endContainer)
+      ) {
+        continue
+      }
       for (const rect of Array.from(range.getClientRects())) {
         const normalized = normalizedRect(rect, frame)
-        if (normalized) rects.push(normalized)
+        if (!normalized) continue
+        // Reject accidental container-wide rects that span a large chunk of the page
+        if ((normalized.w > 0.94 && normalized.h > 0.14) || normalized.h > 0.22) continue
+        rects.push(normalized)
       }
     }
     return rects
@@ -209,13 +265,6 @@ function PdfPage({
     window.getSelection()?.removeAllRanges()
     setMenu(null)
   }
-
-  const finishSelection = useCallback(() => {
-    if (tool !== 'highlight') return
-    const rects = selectionRects()
-    if (rects.length > 0) onHighlight(number, rects, color)
-    clearSelection()
-  }, [tool, number, color, onHighlight, selectionRects])
 
   const openSelectionMenu = (): void => {
     if (tool !== 'select') {
@@ -227,13 +276,13 @@ function PdfPage({
       setMenu(null)
       return
     }
-    const rect = selection.getRangeAt(0).getBoundingClientRect()
-    if (rect.width === 0 && rect.height === 0) {
+    const rects = selectionRects()
+    if (rects.length === 0) {
       setMenu(null)
       return
     }
-    const rects = selectionRects()
-    if (rects.length === 0) {
+    const rect = selection.getRangeAt(0).getBoundingClientRect()
+    if (rect.width === 0 && rect.height === 0) {
       setMenu(null)
       return
     }
@@ -245,57 +294,178 @@ function PdfPage({
     })
   }
 
-  const inkPoint = (event: ReactPointerEvent<SVGSVGElement>): InkPoint | null => {
-    const host = hostRef.current
-    if (!host) return null
-    const rect = host.getBoundingClientRect()
+  const normalizedCanvasPoint = (
+    clientX: number,
+    clientY: number
+  ): { x: number; y: number; width: number; height: number } | null => {
+    const canvas = canvasRef.current
+    if (!canvas) return null
+    const rect = canvas.getBoundingClientRect()
+    if (rect.width < 4 || rect.height < 4) return null
     return {
-      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
-      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+      x: Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (clientY - rect.top) / rect.height)),
+      width: rect.width,
+      height: rect.height
+    }
+  }
+
+  const buildHighlightRect = (
+    anchor: { x: number; y: number },
+    current: { x: number; y: number; height: number }
+  ): NormalizedRect => {
+    const x = Math.min(anchor.x, current.x)
+    const w = Math.abs(current.x - anchor.x)
+    const minBandH = Math.min(0.06, 16 / Math.max(1, current.height))
+    const rawH = Math.abs(current.y - anchor.y)
+    if (rawH < minBandH) {
+      const centerY = (anchor.y + current.y) / 2
+      const y = Math.max(0, Math.min(1 - minBandH, centerY - minBandH / 2))
+      return { x, y, w, h: minBandH }
+    }
+    return {
+      x,
+      y: Math.min(anchor.y, current.y),
+      w,
+      h: rawH
+    }
+  }
+
+  const startHighlightDrag = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (tool !== 'highlight' || event.button !== 0) return
+    event.preventDefault()
+    window.getSelection()?.removeAllRanges()
+    setMenu(null)
+    const pt = normalizedCanvasPoint(event.clientX, event.clientY)
+    if (!pt) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    highlightAnchorRef.current = {
+      x: pt.x,
+      y: pt.y,
+      clientX: event.clientX,
+      clientY: event.clientY
+    }
+    setDraftHighlight(null)
+  }
+
+  const moveHighlightDrag = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const anchor = highlightAnchorRef.current
+    if (tool !== 'highlight' || !anchor) return
+    event.preventDefault()
+    const pt = normalizedCanvasPoint(event.clientX, event.clientY)
+    if (!pt) return
+    const dist = Math.hypot(event.clientX - anchor.clientX, event.clientY - anchor.clientY)
+    if (dist < 6) {
+      setDraftHighlight(null)
+      return
+    }
+    setDraftHighlight(buildHighlightRect(anchor, pt))
+  }
+
+  const endHighlightDrag = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const anchor = highlightAnchorRef.current
+    highlightAnchorRef.current = null
+    if (tool !== 'highlight' || !anchor) {
+      setDraftHighlight(null)
+      return
+    }
+    const dist = Math.hypot(event.clientX - anchor.clientX, event.clientY - anchor.clientY)
+    const pt = normalizedCanvasPoint(event.clientX, event.clientY)
+    setDraftHighlight(null)
+    // Only commit when user intentionally dragged at least 6px (never on accidental clicks)
+    if (dist < 6 || !pt) return
+    const rect = buildHighlightRect(anchor, pt)
+    if (rect.w > 0.004 && rect.h > 0.004) {
+      onHighlight(number, [rect], color)
+    }
+  }
+
+  const inkPoint = (event: ReactPointerEvent<SVGSVGElement>): InkPoint | null => {
+    const pt = normalizedCanvasPoint(event.clientX, event.clientY)
+    if (!pt) return null
+    return {
+      x: pt.x,
+      y: pt.y,
       pressure: event.pressure || 0.5
     }
   }
 
   const startStroke = (event: ReactPointerEvent<SVGSVGElement>): void => {
-    if (tool !== 'ink') return
+    if (tool !== 'ink' || event.button !== 0) return
+    event.preventDefault()
+    window.getSelection()?.removeAllRanges()
+    setMenu(null)
     const point = inkPoint(event)
     if (!point) return
     event.currentTarget.setPointerCapture(event.pointerId)
+    inkStartRef.current = {
+      lastClientX: event.clientX,
+      lastClientY: event.clientY,
+      totalDist: 0
+    }
     setDraftStroke([point])
   }
 
   const moveStroke = (event: ReactPointerEvent<SVGSVGElement>): void => {
-    if (tool !== 'ink' || !draftStroke) return
+    if (tool !== 'ink' || !draftStroke || !inkStartRef.current) return
+    event.preventDefault()
+    const dx = event.clientX - inkStartRef.current.lastClientX
+    const dy = event.clientY - inkStartRef.current.lastClientY
+    const seg = Math.hypot(dx, dy)
+    if (seg < 1.5) return
+    inkStartRef.current.lastClientX = event.clientX
+    inkStartRef.current.lastClientY = event.clientY
+    inkStartRef.current.totalDist += seg
     const point = inkPoint(event)
     if (!point) return
     setDraftStroke((current) => (current ? [...current, point] : current))
   }
 
   const endStroke = (): void => {
-    if (tool !== 'ink' || !draftStroke) return
+    const metrics = inkStartRef.current
+    inkStartRef.current = null
+    if (tool !== 'ink' || !draftStroke) {
+      setDraftStroke(null)
+      return
+    }
     const stroke = draftStroke
     setDraftStroke(null)
-    onInk(number, stroke)
+    // Require genuine drag (>= 4px and >= 2 points) so single clicks never leave stray dots
+    if (stroke.length >= 2 && (metrics?.totalDist ?? 0) >= 4) {
+      onInk(number, stroke)
+    }
   }
+
+  const isMarkingTool = tool === 'highlight' || tool === 'ink' || tool === 'erase'
 
   return (
     <div
-      className="pdf-page"
+      className={`pdf-page ${isMarkingTool ? 'pdf-page--marking' : ''}`}
       ref={hostRef}
       data-page={number}
-      onMouseUp={tool === 'highlight' ? finishSelection : openSelectionMenu}
-      style={{ width: 'fit-content' }}
+      onMouseUp={tool === 'select' ? openSelectionMenu : undefined}
+      style={
+        pageSize
+          ? { width: `${pageSize.width}px`, height: `${pageSize.height}px` }
+          : { width: 'fit-content' }
+      }
     >
       <canvas ref={canvasRef} className="pdf-page__canvas" />
-      <div ref={textRef} className={`textLayer ${tool === 'highlight' ? 'textLayer--selecting' : ''}`} />
-      <div className="pdf-page__annotations" aria-hidden={annotations.length === 0}>
+      <div
+        ref={textRef}
+        className={`textLayer ${isMarkingTool ? 'textLayer--disabled' : ''}`}
+      />
+      <div
+        className={`pdf-page__annotations ${tool === 'erase' ? 'pdf-page__annotations--erasing' : ''}`}
+        aria-hidden={annotations.length === 0}
+      >
         {annotations
           .filter((annotation) => annotation.type === 'highlight')
           .flatMap((annotation) =>
             annotation.rects.map((rect, index) => (
               <span
                 key={`${annotation.id}-${index}`}
-                className="pdf-page__highlight"
+                className={`pdf-page__highlight ${tool === 'erase' ? 'pdf-page__highlight--erasable' : ''}`}
                 style={{
                   left: `${rect.x * 100}%`,
                   top: `${rect.y * 100}%`,
@@ -303,11 +473,45 @@ function PdfPage({
                   height: `${rect.h * 100}%`,
                   background: annotation.color ?? '#e3c26b'
                 }}
-                onClick={() => onOpenAnnotation(annotation)}
+                title={tool === 'erase' ? 'Click to erase highlight' : undefined}
+                onClick={(event) => {
+                  if (tool === 'erase') {
+                    event.stopPropagation()
+                    onErase(annotation)
+                  } else if (tool === 'select') {
+                    onOpenAnnotation(annotation)
+                  }
+                }}
               />
             ))
           )}
       </div>
+
+      {tool === 'highlight' ? (
+        <div
+          className="pdf-page__highlight-layer"
+          onPointerDown={startHighlightDrag}
+          onPointerMove={moveHighlightDrag}
+          onPointerUp={endHighlightDrag}
+          onPointerCancel={() => {
+            highlightAnchorRef.current = null
+            setDraftHighlight(null)
+          }}
+        >
+          {draftHighlight ? (
+            <span
+              className="pdf-page__highlight-draft"
+              style={{
+                left: `${draftHighlight.x * 100}%`,
+                top: `${draftHighlight.y * 100}%`,
+                width: `${draftHighlight.w * 100}%`,
+                height: `${draftHighlight.h * 100}%`,
+                background: color
+              }}
+            />
+          ) : null}
+        </div>
+      ) : null}
 
       {annotations.some((annotation) => annotation.type === 'ink') ||
       draftStroke ||
@@ -334,10 +538,18 @@ function PdfPage({
                   d={inkPath(stroke)}
                   fill="none"
                   stroke={annotation.color ?? '#c9a227'}
-                  strokeWidth={inkWidth(stroke)}
+                  strokeWidth={Math.max(2, inkWidth(stroke) * 5.2)}
+                  vectorEffect="non-scaling-stroke"
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  onClick={() => (tool === 'erase' ? onErase(annotation) : onOpenAnnotation(annotation))}
+                  onClick={(event) => {
+                    if (tool === 'erase') {
+                      event.stopPropagation()
+                      onErase(annotation)
+                    } else if (tool === 'select') {
+                      onOpenAnnotation(annotation)
+                    }
+                  }}
                 />
               ))
             )}
@@ -346,8 +558,10 @@ function PdfPage({
               d={inkPath(draftStroke)}
               fill="none"
               stroke={color}
-              strokeWidth={inkWidth(draftStroke)}
+              strokeWidth={2.5}
+              vectorEffect="non-scaling-stroke"
               strokeLinecap="round"
+              strokeLinejoin="round"
             />
           ) : null}
         </svg>
@@ -1064,6 +1278,11 @@ export function ReaderView() {
             setStudyMode(false)
             break
           }
+          if (tool !== 'select') {
+            setTool('select')
+            window.getSelection()?.removeAllRanges()
+            break
+          }
           setSidebar(false)
           setNoteDraft(null)
           setShortcutsOpen(false)
@@ -1240,9 +1459,19 @@ export function ReaderView() {
 
         <div className="reader__tools">
           <button
+            className={`tool ${tool === 'select' ? 'tool--on' : ''}`}
+            type="button"
+            title="Select text (Esc)"
+            aria-label="Select text"
+            onClick={() => setTool('select')}
+          >
+            ↖
+          </button>
+          <button
             className={`tool ${tool === 'highlight' ? 'tool--on' : ''}`}
             type="button"
-            title="Highlight text (H)"
+            title="Precision highlight — drag on page (H)"
+            aria-label="Precision highlight"
             onClick={() => setTool(tool === 'highlight' ? 'select' : 'highlight')}
           >
             ✎
@@ -1250,7 +1479,8 @@ export function ReaderView() {
           <button
             className={`tool ${tool === 'ink' ? 'tool--on' : ''}`}
             type="button"
-            title="Draw with ink (I)"
+            title="Draw with ink — drag on page (I)"
+            aria-label="Draw with ink"
             onClick={() => setTool(tool === 'ink' ? 'select' : 'ink')}
           >
             ✒
@@ -1258,8 +1488,8 @@ export function ReaderView() {
           <button
             className={`tool ${tool === 'erase' ? 'tool--on' : ''}`}
             type="button"
-            title="Erase a stroke (E)"
-            aria-label="Erase a stroke"
+            title="Erase highlight or ink stroke (E)"
+            aria-label="Erase highlight or ink stroke"
             onClick={() => setTool(tool === 'erase' ? 'select' : 'erase')}
           >
             ⌫
@@ -1592,7 +1822,6 @@ export function ReaderView() {
                   onInk={(target, strokes) => void addInk(target, strokes)}
                   onErase={(annotation) => void deleteAnnotation(annotation.id)}
                   onOpenAnnotation={openAnnotation}
-                  settings={settings}
                   searchQuery={search}
                 />
               ))}
@@ -1623,7 +1852,6 @@ export function ReaderView() {
                   onInk={(target, strokes) => void addInk(target, strokes)}
                   onErase={(annotation) => void deleteAnnotation(annotation.id)}
                   onOpenAnnotation={openAnnotation}
-                  settings={settings}
                   searchQuery={search}
                 />
               ))}
@@ -2020,12 +2248,12 @@ export function ReaderView() {
           <span>{settings.mode === 'page' ? 'Single page' : 'Continuous'}</span>
           <span>
             {tool === 'select'
-              ? 'Select text'
+              ? 'Select text · Drag across words to copy or highlight'
               : tool === 'highlight'
-                ? 'Highlight tool'
+                ? 'Precision Highlighter · Drag where you want to mark · Esc for Select'
                 : tool === 'ink'
-                  ? 'Ink tool'
-                  : 'Eraser'}
+                  ? 'Ink Pen · Drag to draw · Esc for Select'
+                  : 'Eraser · Click any highlight or ink stroke to remove · Esc for Select'}
           </span>
           <span>{book?.pageCount ?? pageCount} pages</span>
         </footer>

@@ -619,7 +619,7 @@ export function RoomView({ library }: Props) {
   const fpsToggleRef = useRef<(() => void) | null>(null)
   const resetViewRef = useRef<(() => void) | null>(null)
   const jumpToAnchorRef = useRef<((anchorId: string) => void) | null>(null)
-  const miniMapPoseRef = useRef<MiniMapPlayerPose>({ x: 0, y: 0, z: 5.15, yaw: 0 })
+  const miniMapPoseRef = useRef<MiniMapPlayerPose>({ x: 0, y: 0, z: 4.45, yaw: 0 })
   const cameraPoseRef = useRef<{
     roomId: number
     x: number
@@ -629,6 +629,9 @@ export function RoomView({ library }: Props) {
     pitch: number
     fov: number
   } | null>(null)
+  const clearKeysRef = useRef<(() => void) | null>(null)
+  const popoverOpenRef = useRef(false)
+  const modalOpenRef = useRef(false)
 
   const [hovered, setHovered] = useState<HoverTarget | null>(null)
   const [fpsActive, setFpsActive] = useState(false)
@@ -643,6 +646,22 @@ export function RoomView({ library }: Props) {
   const [miniMapMarkers, setMiniMapMarkers] = useState<MiniMapMarker[]>([])
   const [scanning, setScanning] = useState(false)
   const [contextLost, setContextLost] = useState(false)
+
+  const searchOpen = useUiStore((state) => state.searchOpen)
+  const settingsOpen = useUiStore((state) => state.settingsOpen)
+  const tipsOpen = useUiStore((state) => state.tipsOpen)
+
+  useEffect(() => {
+    popoverOpenRef.current = placesOpen || atmosphereOpen
+  }, [placesOpen, atmosphereOpen])
+
+  useEffect(() => {
+    const blocked = Boolean(previewBook || searchOpen || settingsOpen || tipsOpen)
+    modalOpenRef.current = blocked
+    if (blocked || deskOpen || openShelfId !== null) {
+      clearKeysRef.current?.()
+    }
+  }, [previewBook, searchOpen, settingsOpen, tipsOpen, deskOpen, openShelfId])
 
   // In-Hall New Wing Builder state
   const [newWingOpen, setNewWingOpen] = useState(false)
@@ -830,7 +849,7 @@ export function RoomView({ library }: Props) {
     walkRing.position.y = 0.032
     scene.add(walkRing)
 
-    const spawnFloorPos = new THREE.Vector3(0, 0, 5.15)
+    const spawnFloorPos = new THREE.Vector3(0, 0, 4.45)
     const spawnLook = new THREE.Vector3(0, 1.55, -5.2)
     const initialAngles = yawPitchFromLook(
       new THREE.Vector3(spawnFloorPos.x, EYE_HEIGHT, spawnFloorPos.z),
@@ -862,6 +881,14 @@ export function RoomView({ library }: Props) {
       toYaw?: number
       toPitch?: number
     } | null = null
+
+    const cancelGlide = (): void => {
+      if (!glide) return
+      glide = null
+      targetFloor.copy(playerFloor)
+      targetYaw = yaw
+      targetPitch = pitch
+    }
 
     const glideTo = (eyeOrFloorPos: THREE.Vector3, lookAt?: THREE.Vector3, floorY?: number): void => {
       const resolvedFloorY = floorY !== undefined ? floorY : Math.max(0, eyeOrFloorPos.y - EYE_HEIGHT)
@@ -995,8 +1022,16 @@ export function RoomView({ library }: Props) {
     const raycaster = new THREE.Raycaster()
     const pointerNdc = new THREE.Vector2(0, 0)
     const keys = new Set<string>()
+    clearKeysRef.current = () => {
+      keys.clear()
+      isDragging = false
+    }
     let isDragging = false
     let dragMoved = false
+    let consumedByPopover = false
+    let dragStartX = 0
+    let dragStartY = 0
+    let totalDragDist = 0
     let lastPointerX = 0
     let lastPointerY = 0
     let lastHoverTime = 0
@@ -1268,21 +1303,31 @@ export function RoomView({ library }: Props) {
       }
 
       if (!isDragging && !locked) {
-        renderer.domElement.style.cursor = target ? 'pointer' : floorPoint ? 'pointer' : 'grab'
+        renderer.domElement.style.cursor = target ? 'pointer' : 'grab'
       }
     }
 
     const onPointerDown = (event: PointerEvent): void => {
       if (event.button !== 0 && event.button !== 2) return
-      setPlacesOpen(false)
-      setAtmosphereOpen(false)
+      if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
+        document.activeElement.blur()
+      }
+      const hadPopover = popoverOpenRef.current
+      if (hadPopover) {
+        setPlacesOpen(false)
+        setAtmosphereOpen(false)
+      }
       if (document.pointerLockElement === renderer.domElement) {
         const res = raycastAt(0, 0)
-        triggerInteract(res.target, res.floorPoint)
+        triggerInteract(res.target, null)
         return
       }
       isDragging = true
       dragMoved = false
+      consumedByPopover = hadPopover
+      dragStartX = event.clientX
+      dragStartY = event.clientY
+      totalDragDist = 0
       lastPointerX = event.clientX
       lastPointerY = event.clientY
       floorCursor.visible = false
@@ -1304,15 +1349,16 @@ export function RoomView({ library }: Props) {
       if (isDragging) {
         const dx = event.clientX - lastPointerX
         const dy = event.clientY - lastPointerY
-        if (Math.abs(dx) + Math.abs(dy) > 4) dragMoved = true
+        totalDragDist += Math.hypot(dx, dy)
+        const netDist = Math.hypot(event.clientX - dragStartX, event.clientY - dragStartY)
+        if (!dragMoved && (totalDragDist > 5 || netDist > 5)) {
+          dragMoved = true
+          cancelGlide()
+        }
         lastPointerX = event.clientX
         lastPointerY = event.clientY
         targetYaw -= dx * 0.004
         targetPitch = Math.max(-1.05, Math.min(1.05, targetPitch - dy * 0.0034))
-        if (glide) {
-          glide.toYaw = undefined
-          glide.toPitch = undefined
-        }
         return
       }
 
@@ -1324,9 +1370,10 @@ export function RoomView({ library }: Props) {
 
     const onPointerUp = (event: PointerEvent): void => {
       if (document.pointerLockElement === renderer.domElement) return
-      const wasLeftClick = isDragging && !dragMoved && event.button === 0
-      const wasRightClick = isDragging && !dragMoved && event.button === 2
+      const wasLeftClick = isDragging && !dragMoved && !consumedByPopover && event.button === 0
+      const wasRightClick = isDragging && !dragMoved && !consumedByPopover && event.button === 2
       isDragging = false
+      consumedByPopover = false
       renderer.domElement.style.cursor = activeHover ? 'pointer' : 'grab'
 
       if (wasLeftClick || wasRightClick) {
@@ -1344,9 +1391,21 @@ export function RoomView({ library }: Props) {
           return
         }
 
-        if (wasLeftClick) {
-          triggerInteract(res.target, res.floorPoint)
+        // Single left-click interacts with books, shelves & landmarks only (never accidental floor walk)
+        if (wasLeftClick && res.target) {
+          triggerInteract(res.target, null)
         }
+      }
+    }
+
+    const onDoubleClick = (event: MouseEvent): void => {
+      if (document.pointerLockElement === renderer.domElement) return
+      const rect = renderer.domElement.getBoundingClientRect()
+      const nx = ((event.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1
+      const ny = -((event.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1
+      const res = raycastAt(nx, ny)
+      if (!res.target && res.floorPoint) {
+        triggerInteract(null, res.floorPoint)
       }
     }
 
@@ -1356,7 +1415,7 @@ export function RoomView({ library }: Props) {
         targetFov = Math.max(MIN_FOV, Math.min(MAX_FOV, targetFov + Math.sign(event.deltaY) * 4))
         return
       }
-      glide = null
+      cancelGlide()
       const step = -Math.sign(event.deltaY) * 0.65
       const forwardX = -Math.sin(targetYaw)
       const forwardZ = -Math.cos(targetYaw)
@@ -1369,11 +1428,14 @@ export function RoomView({ library }: Props) {
 
     const onContextMenu = (event: MouseEvent): void => {
       event.preventDefault()
+      keys.clear()
     }
 
     const onPointerLockChange = (): void => {
       const locked = document.pointerLockElement === renderer.domElement
       setFpsActive(locked)
+      keys.clear()
+      isDragging = false
       if (!locked) {
         renderer.domElement.style.cursor = 'grab'
       } else {
@@ -1391,45 +1453,71 @@ export function RoomView({ library }: Props) {
       }
     }
 
+    const normalizeMoveKey = (event: KeyboardEvent): string | null => {
+      const k = event.key.toLowerCase()
+      if (event.code === 'KeyW' || k === 'w') return 'W'
+      if (event.code === 'KeyA' || k === 'a') return 'A'
+      if (event.code === 'KeyS' || k === 's') return 'S'
+      if (event.code === 'KeyD' || k === 'd') return 'D'
+      if (event.code === 'KeyQ' || k === 'q') return 'Q'
+      if (event.code === 'KeyE' || k === 'e') return 'E'
+      if (event.code === 'ArrowUp' || event.key === 'ArrowUp') return 'Up'
+      if (event.code === 'ArrowDown' || event.key === 'ArrowDown') return 'Down'
+      if (event.code === 'ArrowLeft' || event.key === 'ArrowLeft') return 'Left'
+      if (event.code === 'ArrowRight' || event.key === 'ArrowRight') return 'Right'
+      if (event.code === 'ShiftLeft' || event.code === 'ShiftRight' || event.key === 'Shift') {
+        return 'Shift'
+      }
+      return null
+    }
+
     let anchorIndex = 0
     const onKeyDown = (event: KeyboardEvent): void => {
       const el = event.target as HTMLElement | null
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) {
+      if (
+        el &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          el.isContentEditable)
+      ) {
         return
       }
       if (event.metaKey || event.ctrlKey || event.altKey) return
 
-      const code = event.code
-      if (
-        code === 'KeyW' ||
-        code === 'KeyA' ||
-        code === 'KeyS' ||
-        code === 'KeyD' ||
-        code === 'KeyQ' ||
-        code === 'ArrowUp' ||
-        code === 'ArrowDown' ||
-        code === 'ArrowLeft' ||
-        code === 'ArrowRight' ||
-        code === 'ShiftLeft' ||
-        code === 'ShiftRight'
-      ) {
-        keys.add(code)
-        glide = null
+      const ui = useUiStore.getState()
+      if (modalOpenRef.current || ui.searchOpen || ui.settingsOpen || ui.tipsOpen) {
         return
       }
 
-      if (code === 'KeyE') {
-        if (document.pointerLockElement === renderer.domElement) {
+      if (event.key === '?') {
+        event.preventDefault()
+        setTipsOpen(true)
+        return
+      }
+
+      const moveToken = normalizeMoveKey(event)
+      if (moveToken) {
+        if (moveToken === 'E' && document.pointerLockElement === renderer.domElement) {
           event.preventDefault()
           const res = raycastAt(0, 0)
           triggerInteract(res.target, null)
           return
         }
-        keys.add(code)
-        glide = null
+        if (
+          moveToken === 'Up' ||
+          moveToken === 'Down' ||
+          moveToken === 'Left' ||
+          moveToken === 'Right'
+        ) {
+          event.preventDefault()
+        }
+        keys.add(moveToken)
+        if (moveToken !== 'Shift') cancelGlide()
         return
       }
 
+      const code = event.code
       if (code === 'Tab') {
         event.preventDefault()
         fpsToggleRef.current?.()
@@ -1540,7 +1628,8 @@ export function RoomView({ library }: Props) {
     }
 
     const onKeyUp = (event: KeyboardEvent): void => {
-      keys.delete(event.code)
+      const moveToken = normalizeMoveKey(event)
+      if (moveToken) keys.delete(moveToken)
     }
 
     const onWindowBlur = (): void => {
@@ -1548,12 +1637,21 @@ export function RoomView({ library }: Props) {
       isDragging = false
     }
 
+    const onVisibilityChange = (): void => {
+      if (document.hidden) {
+        keys.clear()
+        isDragging = false
+      }
+    }
+
     renderer.domElement.addEventListener('pointerdown', onPointerDown)
+    renderer.domElement.addEventListener('dblclick', onDoubleClick)
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', onPointerUp)
     renderer.domElement.addEventListener('wheel', onWheel, { passive: false })
     renderer.domElement.addEventListener('contextmenu', onContextMenu)
     document.addEventListener('pointerlockchange', onPointerLockChange)
+    document.addEventListener('visibilitychange', onVisibilityChange)
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     window.addEventListener('blur', onWindowBlur)
@@ -1621,12 +1719,10 @@ export function RoomView({ library }: Props) {
 
       // 1. WASD / Arrow first-person walking with continuous staircase & mezzanine elevation physics
       const moveForward =
-        (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) -
-        (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0)
+        (keys.has('W') || keys.has('Up') ? 1 : 0) - (keys.has('S') || keys.has('Down') ? 1 : 0)
       const moveRight =
-        (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) -
-        (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0)
-      const turnInput = (keys.has('KeyQ') ? 1 : 0) - (keys.has('KeyE') ? 1 : 0)
+        (keys.has('D') || keys.has('Right') ? 1 : 0) - (keys.has('A') || keys.has('Left') ? 1 : 0)
+      const turnInput = (keys.has('Q') ? 1 : 0) - (keys.has('E') ? 1 : 0)
 
       if (turnInput !== 0 && document.pointerLockElement !== renderer.domElement) {
         targetYaw += turnInput * 1.95 * dt
@@ -1634,7 +1730,7 @@ export function RoomView({ library }: Props) {
 
       const isMoving = moveForward !== 0 || moveRight !== 0
       if (isMoving) {
-        const speed = keys.has('ShiftLeft') || keys.has('ShiftRight') ? 5.6 : 3.4
+        const speed = keys.has('Shift') ? 5.8 : 3.6
         const len = Math.hypot(moveForward, moveRight) || 1
         const f = moveForward / len
         const r = moveRight / len
@@ -1649,7 +1745,7 @@ export function RoomView({ library }: Props) {
         targetFloor.set(resolved.x, resolved.y, resolved.z)
       }
 
-      // 2. Smooth click-to-walk / waypoint glide (including between Ground and Mezzanine!)
+      // 2. Smooth double-click / waypoint glide (including between Ground and Mezzanine!)
       if (glide) {
         targetFloor.copy(glide.toFloor)
         if (glide.toYaw !== undefined) {
@@ -1666,11 +1762,12 @@ export function RoomView({ library }: Props) {
         }
       }
 
-      // 3. Exponential damping for weighty, silky camera motion & vertical stair elevation
-      const posLambda = glide ? 4.8 : 9.5
-      const rotLambda = 12
+      // 3. Crisp responsive damping for manual walk & silky glide for waypoints
+      const posLambda = glide ? 5.5 : 18
+      const yLambda = glide ? 5.5 : 16
+      const rotLambda = 14
       playerFloor.x = THREE.MathUtils.damp(playerFloor.x, targetFloor.x, posLambda, dt)
-      playerFloor.y = THREE.MathUtils.damp(playerFloor.y, targetFloor.y, glide ? 4.8 : 11, dt)
+      playerFloor.y = THREE.MathUtils.damp(playerFloor.y, targetFloor.y, yLambda, dt)
       playerFloor.z = THREE.MathUtils.damp(playerFloor.z, targetFloor.z, posLambda, dt)
       yaw = THREE.MathUtils.damp(yaw, targetYaw, rotLambda, dt)
       pitch = THREE.MathUtils.damp(pitch, targetPitch, rotLambda, dt)
@@ -1751,10 +1848,15 @@ export function RoomView({ library }: Props) {
         }
       }
 
-      // 6. Living Grand Hall ambient animations: globe, gramophone, fireplace flicker, storm rain & lightning
+      // 6. Living Grand Hall ambient animations: globe, armillary orrery, gramophone, fireplace flicker, storm rain & lightning
       if (built.globeSphere && !reducedMotion) {
         globeSpinBoost = THREE.MathUtils.damp(globeSpinBoost, 0, 2.5, dt)
         built.globeSphere.rotation.y += dt * (0.14 + globeSpinBoost)
+      }
+      if (built.orreryRings.length >= 3 && !reducedMotion) {
+        built.orreryRings[0].rotation.y += dt * 0.14
+        built.orreryRings[1].rotation.x += dt * 0.19
+        built.orreryRings[2].rotation.z -= dt * 0.24
       }
       if (built.platter && usePlayerStore.getState().playing) {
         built.platter.rotation.y -= dt * 2.2
@@ -1848,6 +1950,7 @@ export function RoomView({ library }: Props) {
         document.exitPointerLock()
       }
       renderer.domElement.removeEventListener('pointerdown', onPointerDown)
+      renderer.domElement.removeEventListener('dblclick', onDoubleClick)
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', onPointerUp)
       renderer.domElement.removeEventListener('wheel', onWheel)
@@ -1855,9 +1958,11 @@ export function RoomView({ library }: Props) {
       renderer.domElement.removeEventListener('webglcontextlost', onContextLost)
       renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored)
       document.removeEventListener('pointerlockchange', onPointerLockChange)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onWindowBlur)
+      clearKeysRef.current = null
 
       hoverBoxGeo.dispose()
       hoverBoxMat.dispose()
@@ -1889,7 +1994,8 @@ export function RoomView({ library }: Props) {
     quality,
     theme,
     mood,
-    setSettingsOpen
+    setSettingsOpen,
+    setTipsOpen
   ])
 
   const scanMissing = async (): Promise<void> => {
@@ -2028,12 +2134,17 @@ export function RoomView({ library }: Props) {
         onToggleVisible={() => setMiniMapOpen((open) => !open)}
       />
 
-      {/* Subtle FPS center reticle */}
+      {/* Subtle FPS center reticle & status banner */}
       {fpsActive ? (
-        <div
-          className={`room__reticle ${hovered ? 'room__reticle--active' : ''}`}
-          aria-hidden="true"
-        />
+        <>
+          <div className="room__fps-banner" role="status">
+            First-Person Walk · WASD Move · Mouse Look · E Interact · Esc Exit
+          </div>
+          <div
+            className={`room__reticle ${hovered ? 'room__reticle--active' : ''}`}
+            aria-hidden="true"
+          />
+        </>
       ) : null}
 
       {/* Diegetic interaction prompt on hover / aim */}
@@ -2181,22 +2292,26 @@ export function RoomView({ library }: Props) {
         <button
           type="button"
           className="game-dock__toggle"
-          onClick={() => {
+          onClick={(e) => {
+            e.currentTarget.blur()
             setDockOpen((open) => !open)
             setPlacesOpen(false)
             setAtmosphereOpen(false)
           }}
           aria-expanded={dockOpen}
-          title={dockOpen ? 'Hide controls (H)' : 'Show controls (H)'}
+          title={dockOpen ? 'Hide HUD (H)' : 'Show HUD (H)'}
         >
-          {dockOpen ? '▾ Hide' : '▴ Controls'}
+          {dockOpen ? '▾ Hide' : '▴ Menu'}
         </button>
 
         <div className="game-dock" role="toolbar" aria-label="Library controls">
           <button
             type="button"
             className="game-dock__btn game-dock__btn--primary"
-            onClick={() => void pickImportFiles()}
+            onClick={(e) => {
+              e.currentTarget.blur()
+              void pickImportFiles()
+            }}
           >
             Import
           </button>
@@ -2204,23 +2319,25 @@ export function RoomView({ library }: Props) {
           <button
             type="button"
             className={`game-dock__btn ${placesOpen ? 'game-dock__btn--active' : ''}`}
-            onClick={() => {
+            onClick={(e) => {
+              e.currentTarget.blur()
               setAtmosphereOpen(false)
               setPlacesOpen((open) => !open)
             }}
-            title="Jump to shelves, build wings, or visit Upper Balcony (P)"
+            title="Jump to shelves, build wings, or visit Mezzanine (P)"
           >
-            Shelves &amp; Wings
+            Shelves
           </button>
 
           <button
             type="button"
             className={`game-dock__btn ${atmosphereOpen || ambientEnabled ? 'game-dock__btn--active' : ''}`}
-            onClick={() => {
+            onClick={(e) => {
+              e.currentTarget.blur()
               setPlacesOpen(false)
               setAtmosphereOpen((open) => !open)
             }}
-            title="Switch Hall Theme, Time & Weather Mood, and Ambient Sound (T)"
+            title="Theme, Time & Weather Mood, and Ambient Soundscape (T)"
           >
             Atmosphere
           </button>
@@ -2228,27 +2345,62 @@ export function RoomView({ library }: Props) {
           <button
             type="button"
             className={`game-dock__btn ${studyRunning ? 'game-dock__btn--active' : ''}`}
-            onClick={() => setDeskOpen(true)}
+            onClick={(e) => {
+              e.currentTarget.blur()
+              setDeskOpen(true)
+            }}
             title="Reading Desk, Inbox & Study Tracker"
           >
             {studyRunning ? `Desk · ${studyDisplay}` : `Desk${inboxCount > 0 ? ` (${inboxCount})` : ''}`}
           </button>
 
-          <button type="button" className="game-dock__btn" onClick={() => setSearchOpen(true)}>
+          <button
+            type="button"
+            className="game-dock__btn"
+            onClick={(e) => {
+              e.currentTarget.blur()
+              setSearchOpen(true)
+            }}
+            title="Search library (Ctrl/Cmd + K)"
+          >
             Search
           </button>
 
           <span className="game-dock__divider" aria-hidden="true" />
 
-          <button type="button" className="game-dock__btn" onClick={() => navigate('map')}>
+          <button
+            type="button"
+            className="game-dock__btn"
+            onClick={(e) => {
+              e.currentTarget.blur()
+              navigate('map')
+            }}
+            title="Floor Plan & Atlas (M)"
+          >
             Map
           </button>
 
-          <button type="button" className="game-dock__btn" onClick={() => navigate('index')}>
+          <button
+            type="button"
+            className="game-dock__btn"
+            onClick={(e) => {
+              e.currentTarget.blur()
+              navigate('index')
+            }}
+            title="Library Catalogue Index (I)"
+          >
             Index
           </button>
 
-          <button type="button" className="game-dock__btn" onClick={() => navigate('librarian')}>
+          <button
+            type="button"
+            className="game-dock__btn"
+            onClick={(e) => {
+              e.currentTarget.blur()
+              navigate('librarian')
+            }}
+            title="Manage Library & Shelves (L)"
+          >
             Manage
           </button>
 
@@ -2257,8 +2409,11 @@ export function RoomView({ library }: Props) {
           <button
             type="button"
             className={`game-dock__btn ${fpsActive ? 'game-dock__btn--active' : ''}`}
-            onClick={() => fpsToggleRef.current?.()}
-            title="Toggle first-person walk mode (Tab)"
+            onClick={(e) => {
+              e.currentTarget.blur()
+              fpsToggleRef.current?.()
+            }}
+            title="First-person walk mode (Tab)"
           >
             {fpsActive ? 'Exit Walk' : 'Walk'}
           </button>
@@ -2266,35 +2421,44 @@ export function RoomView({ library }: Props) {
           <button
             type="button"
             className="game-dock__btn"
-            onClick={() => resetViewRef.current?.()}
-            title="Return to Grand Hall entrance (R)"
+            onClick={(e) => {
+              e.currentTarget.blur()
+              resetViewRef.current?.()
+            }}
+            title="Return to Grand Hall Entrance (R)"
+            aria-label="Return to entrance"
           >
-            Entrance
+            ↺
           </button>
 
           <button
             type="button"
             className="game-dock__btn"
-            onClick={() => setSettingsOpen(true)}
+            onClick={(e) => {
+              e.currentTarget.blur()
+              setSettingsOpen(true)
+            }}
             title="Settings (Ctrl/Cmd + ,)"
+            aria-label="Settings"
           >
-            Settings
+            ⚙
           </button>
 
           <button
             type="button"
             className="game-dock__btn"
-            onClick={() => setTipsOpen(true)}
-            title="Controls & shortcuts"
-            aria-label="Controls and shortcuts"
+            onClick={(e) => {
+              e.currentTarget.blur()
+              setTipsOpen(true)
+            }}
+            title="Detailed Controls & Navigation Guide (?)"
           >
-            ?
+            Controls
           </button>
         </div>
 
         <p className="game-dock__keys" aria-hidden="true">
-          WASD walk (climb stairs to balcony) · Right-click book to preview · P shelves · T
-          atmosphere · N mini-map · Tab first-person
+          WASD Move · Drag Look · Double-Click Floor · Click Book · ? Controls
         </p>
       </div>
 

@@ -93,6 +93,7 @@ export interface BuiltRoomScene {
   windowHalos: THREE.Sprite[]
   hearthLight: THREE.PointLight | null
   hearthFlame: THREE.Mesh | null
+  orreryRings: THREE.Object3D[]
   disposables: {
     textures: THREE.Texture[]
     materials: THREE.Material[]
@@ -827,6 +828,7 @@ export function buildLibraryScene(
   const placements: SpinePlacement[] = []
   const lampGlows: THREE.Sprite[] = []
   const windowHalos: THREE.Sprite[] = []
+  const orreryRings: THREE.Object3D[] = []
   const disposables = {
     textures: [] as THREE.Texture[],
     materials: [] as THREE.Material[],
@@ -2553,6 +2555,339 @@ export function buildLibraryScene(
     group.add(dust)
   }
 
+  // 15. Iconic Great Library of Alexandria Centerpieces
+  // 15a. Grand Suspended Celestial Armillary Orrery beneath the Oculus Dome
+  {
+    const orrery = new THREE.Group()
+    orrery.position.set(0, 5.45, -0.35)
+
+    // Brass suspension rod from oculus center
+    const rod = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.022, 0.022, 2.0, 10)), brassMat)
+    rod.position.y = 1.0
+    orrery.add(rod)
+
+    const crown = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(0.24, 0.025, 10, 28)), brassMat)
+    crown.rotation.x = Math.PI / 2
+    crown.position.y = 1.85
+    orrery.add(crown)
+
+    // Three counter-rotating celestial meridian rings
+    const outerRing = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(1.18, 0.028, 12, 48)), brassMat)
+    outerRing.rotation.set(0.32, 0.2, 0.15)
+    orrery.add(outerRing)
+    orreryRings.push(outerRing)
+
+    const midRing = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(0.92, 0.024, 12, 42)), brassMat)
+    midRing.rotation.set(1.1, 0.5, -0.25)
+    orrery.add(midRing)
+    orreryRings.push(midRing)
+
+    const innerRing = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(0.64, 0.02, 10, 36)), brassMat)
+    innerRing.rotation.set(-0.55, 0.85, 0.4)
+    orrery.add(innerRing)
+    orreryRings.push(innerRing)
+
+    // Small orbiting brass planets attached to mid & outer rings
+    const planetA = new THREE.Mesh(trackGeo(new THREE.SphereGeometry(0.065, 14, 14)), brassMat)
+    planetA.position.set(0.92, 0, 0)
+    midRing.add(planetA)
+
+    const planetB = new THREE.Mesh(trackGeo(new THREE.SphereGeometry(0.05, 12, 12)), limestoneMat)
+    planetB.position.set(-1.18, 0, 0)
+    outerRing.add(planetB)
+
+    // Luminous golden sun core
+    const sunMat = trackMat(
+      new THREE.MeshStandardMaterial({
+        color: '#f2c86b',
+        emissive: '#e5a43b',
+        emissiveIntensity: 1.35,
+        roughness: 0.22,
+        metalness: 0.65
+      })
+    )
+    const sunOrb = new THREE.Mesh(trackGeo(new THREE.SphereGeometry(0.17, 18, 18)), sunMat)
+    orrery.add(sunOrb)
+
+    const orreryHalo = new THREE.Sprite(
+      trackMat(
+        new THREE.SpriteMaterial({
+          map: glowTex,
+          color: '#ffd994',
+          transparent: true,
+          opacity: 0.42,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false
+        })
+      )
+    )
+    orreryHalo.scale.set(1.5, 1.5, 1)
+    orrery.add(orreryHalo)
+    lampGlows.push(orreryHalo)
+
+    group.add(orrery)
+  }
+
+  // 15b. Inlaid Classical Alexandria Compass Rose Floor Medallion (entrance nave focal point)
+  {
+    const mosaicCanvas = document.createElement('canvas')
+    mosaicCanvas.width = 512
+    mosaicCanvas.height = 512
+    const mctx = mosaicCanvas.getContext('2d')
+    if (mctx) {
+      const cx = 256
+      const cy = 256
+      mctx.clearRect(0, 0, 512, 512)
+      // Outer marble & brass rings
+      mctx.beginPath()
+      mctx.arc(cx, cy, 240, 0, Math.PI * 2)
+      mctx.fillStyle = palette.floorMode === 'marble' ? 'rgba(218, 204, 178, 0.85)' : 'rgba(26, 20, 15, 0.82)'
+      mctx.fill()
+      mctx.lineWidth = 10
+      mctx.strokeStyle = palette.brass
+      mctx.stroke()
+
+      mctx.beginPath()
+      mctx.arc(cx, cy, 208, 0, Math.PI * 2)
+      mctx.lineWidth = 4
+      mctx.strokeStyle = 'rgba(216, 178, 110, 0.65)'
+      mctx.stroke()
+
+      // 16-point Alexandria sunburst compass star
+      for (let i = 0; i < 16; i += 1) {
+        const angle = (i / 16) * Math.PI * 2
+        const longRay = i % 2 === 0
+        const rTip = longRay ? 202 : 142
+        const rBase = 36
+        const spread = longRay ? 0.14 : 0.09
+        mctx.beginPath()
+        mctx.moveTo(cx + Math.cos(angle) * rTip, cy + Math.sin(angle) * rTip)
+        mctx.lineTo(cx + Math.cos(angle + spread) * rBase, cy + Math.sin(angle + spread) * rBase)
+        mctx.lineTo(cx + Math.cos(angle - spread) * rBase, cy + Math.sin(angle - spread) * rBase)
+        mctx.closePath()
+        mctx.fillStyle = longRay ? palette.brass : palette.rugField
+        mctx.fill()
+      }
+
+      // Center gilded medallion
+      mctx.beginPath()
+      mctx.arc(cx, cy, 38, 0, Math.PI * 2)
+      mctx.fillStyle = palette.woodDark
+      mctx.fill()
+      mctx.lineWidth = 5
+      mctx.strokeStyle = palette.brass
+      mctx.stroke()
+    }
+    const mosaicTex = trackTex(new THREE.CanvasTexture(mosaicCanvas))
+    mosaicTex.colorSpace = THREE.SRGBColorSpace
+    mosaicTex.anisotropy = anisotropy
+    const medallion = new THREE.Mesh(
+      trackGeo(new THREE.CircleGeometry(1.55, 48)),
+      trackMat(
+        new THREE.MeshStandardMaterial({
+          map: mosaicTex,
+          transparent: true,
+          roughness: 0.42,
+          metalness: 0.28,
+          depthWrite: false
+        })
+      )
+    )
+    medallion.rotation.x = -Math.PI / 2
+    medallion.position.set(0, 0.012, 3.05)
+    group.add(medallion)
+  }
+
+  // 15c. Rolling Oak & Brass Library Ladders leaning along North & West bookcases
+  {
+    const buildLadder = (lx: number, lz: number, rotY: number): void => {
+      const ladder = new THREE.Group()
+      ladder.position.set(lx, 0, lz)
+      ladder.rotation.y = rotY
+
+      const railGeo = trackGeo(new THREE.BoxGeometry(0.055, 3.55, 0.07))
+      for (const side of [-0.24, 0.24]) {
+        const rail = new THREE.Mesh(railGeo, woodMat)
+        rail.position.set(side, 1.72, 0.22)
+        rail.rotation.x = -0.13
+        rail.castShadow = true
+        ladder.add(rail)
+
+        // Brass top rail hook
+        const hook = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(0.055, 0.015, 8, 16)), brassMat)
+        hook.position.set(side, 3.44, -0.02)
+        hook.rotation.y = Math.PI / 2
+        ladder.add(hook)
+      }
+
+      const rungGeo = trackGeo(new THREE.CylinderGeometry(0.016, 0.016, 0.48, 8))
+      for (let step = 0; step < 10; step += 1) {
+        const y = 0.32 + step * 0.31
+        const z = 0.42 - step * 0.041
+        const rung = new THREE.Mesh(rungGeo, brassMat)
+        rung.rotation.z = Math.PI / 2
+        rung.position.set(0, y, z)
+        ladder.add(rung)
+      }
+      group.add(ladder)
+    }
+
+    buildLadder(-2.95, -ROOM_DEPTH / 2 + 0.46, 0)
+    buildLadder(-ROOM_WIDTH / 2 + 0.46, -2.55, Math.PI / 2)
+  }
+
+  // 15d. Sculpted Classical Marble Scholar Busts & Warm Brass Tripod Braziers flanking the Hall
+  {
+    const marbleBustMat = trackMat(
+      new THREE.MeshStandardMaterial({
+        color: palette.floorMode === 'marble' ? '#efe9dc' : '#ddd3c0',
+        roughness: 0.36,
+        metalness: 0.05
+      })
+    )
+    const flameMat = trackMat(
+      new THREE.MeshBasicMaterial({
+        color: '#ffb85c',
+        transparent: true,
+        opacity: 0.9
+      })
+    )
+
+    const plinthSpots: Array<[number, number, number]> = [
+      [-5.6, -4.85, 0.6],
+      [5.6, -4.85, -0.6]
+    ]
+    for (const [px, pz, rotY] of plinthSpots) {
+      const ped = new THREE.Group()
+      ped.position.set(px, 0, pz)
+      ped.rotation.y = rotY
+
+      // Fluted marble pedestal
+      const base = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(0.62, 0.14, 0.62)), stoneTrimMat)
+      base.position.y = 0.07
+      ped.add(base)
+
+      const shaft = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.22, 0.25, 1.05, 12)), limestoneMat)
+      shaft.position.y = 0.66
+      shaft.castShadow = true
+      ped.add(shaft)
+
+      const cap = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(0.56, 0.1, 0.56)), stoneTrimMat)
+      cap.position.y = 1.22
+      ped.add(cap)
+
+      // Classical scholar bust (draped shoulders + neck + sculpted head + laurel ring)
+      const shoulders = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.14, 0.24, 0.24, 14)), marbleBustMat)
+      shoulders.position.y = 1.39
+      ped.add(shoulders)
+
+      const neck = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.065, 0.08, 0.1, 12)), marbleBustMat)
+      neck.position.y = 1.54
+      ped.add(neck)
+
+      const head = new THREE.Mesh(trackGeo(new THREE.SphereGeometry(0.125, 16, 16)), marbleBustMat)
+      head.scale.set(0.88, 1.12, 0.96)
+      head.position.y = 1.69
+      head.castShadow = true
+      ped.add(head)
+
+      const laurel = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(0.11, 0.015, 8, 18)), brassMat)
+      laurel.rotation.x = Math.PI / 2 - 0.18
+      laurel.position.y = 1.74
+      ped.add(laurel)
+
+      group.add(ped)
+    }
+
+    // Twin classical bronze tripod oil braziers framing the central colonnade (warm library ambiance)
+    const brazierSpots: Array<[number, number]> = [
+      [-5.15, 3.85],
+      [5.15, -0.85]
+    ]
+    for (const [bx, bz] of brazierSpots) {
+      const brazier = new THREE.Group()
+      brazier.position.set(bx, 0, bz)
+
+      const bowl = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.28, 0.12, 0.18, 14)), brassMat)
+      bowl.position.y = 1.32
+      brazier.add(bowl)
+
+      for (let i = 0; i < 3; i += 1) {
+        const a = (i / 3) * Math.PI * 2
+        const leg = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.022, 0.018, 1.34, 8)), brassMat)
+        leg.position.set(Math.cos(a) * 0.16, 0.65, Math.sin(a) * 0.16)
+        leg.rotation.z = Math.cos(a) * 0.08
+        leg.rotation.x = -Math.sin(a) * 0.08
+        brazier.add(leg)
+      }
+
+      const ember = new THREE.Mesh(trackGeo(new THREE.ConeGeometry(0.12, 0.24, 10)), flameMat)
+      ember.position.y = 1.49
+      brazier.add(ember)
+
+      const halo = new THREE.Sprite(
+        trackMat(
+          new THREE.SpriteMaterial({
+            map: glowTex,
+            color: '#ffbe6b',
+            transparent: true,
+            opacity: 0.55,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+          })
+        )
+      )
+      halo.position.y = 1.56
+      halo.scale.set(1.15, 1.15, 1)
+      brazier.add(halo)
+      lampGlows.push(halo)
+
+      group.add(brazier)
+    }
+  }
+
+  // 15e. Ancient Alexandria Papyrus Scroll Rack (north-east corner alcove)
+  {
+    const rack = new THREE.Group()
+    rack.position.set(5.95, 0, -5.85)
+    rack.rotation.y = -Math.PI / 4
+
+    const frame = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(1.15, 1.48, 0.42)), woodMat)
+    frame.position.y = 0.74
+    frame.castShadow = true
+    rack.add(frame)
+
+    const trimTop = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(1.24, 0.08, 0.48)), trimMat)
+    trimTop.position.y = 1.5
+    rack.add(trimTop)
+
+    const parchmentMat = trackMat(
+      new THREE.MeshStandardMaterial({ color: '#e6d5b2', roughness: 0.72, metalness: 0.02 })
+    )
+    const ribbonMat = trackMat(
+      new THREE.MeshStandardMaterial({ color: '#8b2f28', roughness: 0.55, metalness: 0.12 })
+    )
+    const scrollGeo = trackGeo(new THREE.CylinderGeometry(0.036, 0.036, 0.44, 10))
+    const bandGeo = trackGeo(new THREE.TorusGeometry(0.038, 0.008, 6, 12))
+
+    for (let row = 0; row < 3; row += 1) {
+      for (let col = 0; col < 5; col += 1) {
+        const sx = -0.38 + col * 0.19
+        const sy = 0.34 + row * 0.38
+        const scroll = new THREE.Mesh(scrollGeo, parchmentMat)
+        scroll.rotation.x = Math.PI / 2
+        scroll.position.set(sx, sy, 0.06)
+        rack.add(scroll)
+
+        const band = new THREE.Mesh(bandGeo, ribbonMat)
+        band.position.set(sx, sy, 0.25)
+        rack.add(band)
+      }
+    }
+
+    group.add(rack)
+  }
+
   return {
     group,
     interactables,
@@ -2570,6 +2905,7 @@ export function buildLibraryScene(
     windowHalos,
     hearthLight,
     hearthFlame,
+    orreryRings,
     disposables
   }
 }
