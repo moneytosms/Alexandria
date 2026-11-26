@@ -1,11 +1,11 @@
-export type DetectedPlatform = 'linux' | 'windows' | 'macos' | 'unknown'
+export type DetectedPlatform = 'linux' | 'windows' | 'macos' | 'android' | 'unknown'
 
 export interface ReleaseAssetInfo {
   name: string
   downloadUrl: string
   sizeBytes: number
   sizeLabel: string
-  platform: 'linux' | 'windows' | 'macos' | 'checksum'
+  platform: 'linux' | 'windows' | 'macos' | 'android' | 'checksum'
   formatLabel: string
   formatDetail: string
   recommended?: boolean
@@ -44,6 +44,14 @@ export function detectClientPlatform(): {
   const isArm =
     archHint.includes('arm') || ua.includes('arm64') || ua.includes('aarch64') || ua.includes('apple')
 
+  if (ua.includes('android') || platform.includes('android')) {
+    return {
+      os: 'android',
+      arch: 'arm64',
+      label: 'Android (APK)',
+      shortCta: 'Download for Android'
+    }
+  }
   if (platform.includes('mac') || ua.includes('mac os') || ua.includes('macintosh')) {
     return {
       os: 'macos',
@@ -69,7 +77,7 @@ export function detectClientPlatform(): {
     }
   }
 
-  return { os: 'unknown', arch: 'x64', label: 'Desktop', shortCta: 'Download Alexandria' }
+  return { os: 'unknown', arch: 'x64', label: 'Desktop & Android', shortCta: 'Download Alexandria' }
 }
 
 /**
@@ -176,6 +184,18 @@ function classifyAsset(name: string, downloadUrl: string, sizeBytes: number): Re
       formatDetail: 'Apple Silicon (arm64) compressed bundle'
     }
   }
+  if (lower.endsWith('.apk')) {
+    return {
+      name,
+      downloadUrl,
+      sizeBytes,
+      sizeLabel: formatBytes(sizeBytes),
+      platform: 'android',
+      formatLabel: 'Android Package (.apk)',
+      formatDetail: 'Universal signed Android installer (Android 8.0+)',
+      recommended: true
+    }
+  }
   if (lower === 'sha256sums.txt' || lower.includes('sha256')) {
     return {
       name,
@@ -197,8 +217,8 @@ export function buildFallbackRelease(repoSlug: string): ReleasePayload {
     repoSlug,
     repoUrl,
     releasesUrl,
-    tagName: 'latest',
-    versionLabel: 'v0.1.0',
+    tagName: 'v1.0.0',
+    versionLabel: 'v1.0.0',
     publishedAt: null,
     live: false,
     checksumAsset: {
@@ -212,7 +232,7 @@ export function buildFallbackRelease(repoSlug: string): ReleasePayload {
     },
     assets: [
       {
-        name: 'Alexandria-0.1.0-linux-x64.AppImage',
+        name: 'Alexandria-1.0.0-linux-x64.AppImage',
         downloadUrl: releasesUrl,
         sizeBytes: 0,
         sizeLabel: 'GitHub Release',
@@ -222,7 +242,7 @@ export function buildFallbackRelease(repoSlug: string): ReleasePayload {
         recommended: true
       },
       {
-        name: 'Alexandria-0.1.0-linux-x64.deb',
+        name: 'Alexandria-1.0.0-linux-x64.deb',
         downloadUrl: releasesUrl,
         sizeBytes: 0,
         sizeLabel: 'GitHub Release',
@@ -231,7 +251,7 @@ export function buildFallbackRelease(repoSlug: string): ReleasePayload {
         formatDetail: 'System package for APT distributions (x64)'
       },
       {
-        name: 'Alexandria-0.1.0-win-x64-setup.exe',
+        name: 'Alexandria-1.0.0-win-x64-setup.exe',
         downloadUrl: releasesUrl,
         sizeBytes: 0,
         sizeLabel: 'GitHub Release',
@@ -241,7 +261,7 @@ export function buildFallbackRelease(repoSlug: string): ReleasePayload {
         recommended: true
       },
       {
-        name: 'Alexandria-0.1.0-win-x64-portable.exe',
+        name: 'Alexandria-1.0.0-win-x64-portable.exe',
         downloadUrl: releasesUrl,
         sizeBytes: 0,
         sizeLabel: 'GitHub Release',
@@ -250,7 +270,7 @@ export function buildFallbackRelease(repoSlug: string): ReleasePayload {
         formatDetail: 'Zero-install single executable (x64)'
       },
       {
-        name: 'Alexandria-0.1.0-mac-arm64.dmg',
+        name: 'Alexandria-1.0.0-mac-arm64.dmg',
         downloadUrl: releasesUrl,
         sizeBytes: 0,
         sizeLabel: 'GitHub Release',
@@ -260,13 +280,23 @@ export function buildFallbackRelease(repoSlug: string): ReleasePayload {
         recommended: true
       },
       {
-        name: 'Alexandria-0.1.0-mac-arm64.zip',
+        name: 'Alexandria-1.0.0-mac-arm64.zip',
         downloadUrl: releasesUrl,
         sizeBytes: 0,
         sizeLabel: 'GitHub Release',
         platform: 'macos',
         formatLabel: 'macOS Archive (.zip)',
         formatDetail: 'Apple Silicon (arm64) compressed bundle'
+      },
+      {
+        name: 'Alexandria-1.0.0-android-universal.apk',
+        downloadUrl: releasesUrl,
+        sizeBytes: 0,
+        sizeLabel: 'GitHub Release',
+        platform: 'android',
+        formatLabel: 'Android Package (.apk)',
+        formatDetail: 'Universal signed Android installer (Android 8.0+)',
+        recommended: true
       }
     ]
   }

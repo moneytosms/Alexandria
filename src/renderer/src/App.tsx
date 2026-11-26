@@ -1,23 +1,36 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type DragEvent } from 'react'
 import { MusicDock } from './components/MusicDock'
+import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton'
 import { QueueTray } from './components/QueueTray'
 import { SearchOverlay } from './components/SearchOverlay'
-import { SettingsDialog } from './components/SettingsDialog'
 import { WelcomeCard } from './components/WelcomeCard'
 import { queueDroppedFiles } from './import-actions'
+import { formatShortcut, usePlatformCapabilities } from './platform'
 import { navigate, useView, viewIds, viewMeta } from './router'
 import { applyThemeToDocument, normalizeHallTheme } from './room/atmosphere'
 import { useAmbientStore } from './sound'
 import { useLibraryStore } from './state/library-store'
 import { restorePlayer, wirePlayerPersistence } from './state/player-persistence'
+import { useScholarStore } from './state/scholar-store'
 import { useSettingsStore } from './state/settings-store'
 import { useStudyStore } from './state/study-store'
 import { useUiStore } from './state/ui-store'
-import { IndexView } from './views/IndexView'
-import { LibrarianView } from './views/LibrarianView'
-import { MapView } from './views/MapView'
-import { ReaderView } from './views/ReaderView'
-import { RoomView } from './views/RoomView'
+
+const loadRoomView = () => import('./views/RoomView').then((m) => ({ default: m.RoomView }))
+const loadReaderView = () => import('./views/ReaderView').then((m) => ({ default: m.ReaderView }))
+const loadMapView = () => import('./views/MapView').then((m) => ({ default: m.MapView }))
+const loadLibrarianView = () =>
+  import('./views/LibrarianView').then((m) => ({ default: m.LibrarianView }))
+const loadIndexView = () => import('./views/IndexView').then((m) => ({ default: m.IndexView }))
+const loadSettingsDialog = () =>
+  import('./components/SettingsDialog').then((m) => ({ default: m.SettingsDialog }))
+
+const RoomView = lazy(loadRoomView)
+const ReaderView = lazy(loadReaderView)
+const MapView = lazy(loadMapView)
+const LibrarianView = lazy(loadLibrarianView)
+const IndexView = lazy(loadIndexView)
+const SettingsDialog = lazy(loadSettingsDialog)
 
 const navLabels: Record<(typeof viewIds)[number], string> = {
   room: 'Room',
@@ -27,13 +40,26 @@ const navLabels: Record<(typeof viewIds)[number], string> = {
   index: 'Index'
 }
 
+function ViewLoadingFallback({ label }: { label: string }) {
+  return (
+    <div className="view-loading" role="status" aria-live="polite">
+      <span className="view-loading__crest" aria-hidden="true">
+        A
+      </span>
+      <span className="view-loading__text">Preparing {label}…</span>
+    </div>
+  )
+}
+
 export default function App() {
   const view = useView()
+  const platform = usePlatformCapabilities()
   const library = useLibraryStore((state) => state.info)
   const books = useLibraryStore((state) => state.books)
   const status = useLibraryStore((state) => state.status)
   const loadLibrary = useLibraryStore((state) => state.load)
   const setSearchOpen = useUiStore((state) => state.setSearchOpen)
+  const settingsOpen = useUiStore((state) => state.settingsOpen)
   const setSettingsOpen = useUiStore((state) => state.setSettingsOpen)
   const loadSettings = useSettingsStore((state) => state.load)
   const settingsLoaded = useSettingsStore((state) => state.loaded)
@@ -81,9 +107,31 @@ export default function App() {
     void loadSettings()
   }, [loadLibrary, loadSettings])
 
+  // Idle-prefetch common secondary views after initial frame settles so transitions feel instant
+  useEffect(() => {
+    const win = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+      cancelIdleCallback?: (id: number) => void
+    }
+    const prefetch = (): void => {
+      void loadIndexView()
+      void loadMapView()
+      if (view !== 'reader') {
+        void loadReaderView()
+      }
+    }
+    if (typeof win.requestIdleCallback === 'function') {
+      const id = win.requestIdleCallback(prefetch, { timeout: 2200 })
+      return () => win.cancelIdleCallback?.(id)
+    }
+    const timer = window.setTimeout(prefetch, 1400)
+    return () => window.clearTimeout(timer)
+  }, [view])
+
   useEffect(() => {
     if (!settingsLoaded) return
     useStudyStore.getState().hydrate()
+    useScholarStore.getState().hydrate()
     useAmbientStore.getState().hydrate()
   }, [settingsLoaded])
 
@@ -124,9 +172,12 @@ export default function App() {
       view === 'reader' && selectedBook ? `${selectedBook.title} · Alexandria` : `${meta.title} · Alexandria`
   }, [meta.title, selectedBook, view])
 
+  const searchShortcut = formatShortcut('K', platform)
+  const settingsShortcut = formatShortcut(',', platform)
+
   return (
     <div
-      className={`app ${isImmersiveRoom ? 'app--immersive' : ''} ${view === 'reader' ? 'app--reader' : ''} ${isStudyFocus ? 'app--study' : ''}`}
+      className={`app ${isImmersiveRoom ? 'app--immersive' : ''} ${view === 'reader' ? 'app--reader' : ''} ${isStudyFocus ? 'app--study' : ''} ${platform.isTouchPrimary ? 'app--touch' : ''}`}
       onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
@@ -159,25 +210,32 @@ export default function App() {
             </nav>
 
             <div className="slimbar__actions">
+              <PWAInstallButton compact />
               <button
                 type="button"
                 className="slimbar__action"
                 onClick={() => setSearchOpen(true)}
                 aria-label="Search library"
               >
-                Search <kbd>⌘K</kbd>
+                Search {!platform.isTouchPrimary ? <kbd>{searchShortcut}</kbd> : null}
               </button>
               <button
                 type="button"
                 className="slimbar__icon"
                 onClick={() => setSettingsOpen(true)}
                 aria-label="Open settings"
-                title="Settings (Ctrl/Cmd + ,)"
+                title={`Settings (${settingsShortcut})`}
               >
                 ⚙
               </button>
             </div>
           </header>
+        ) : null}
+
+        {isImmersiveRoom ? (
+          <div className="pwa-room-install">
+            <PWAInstallButton />
+          </div>
         ) : null}
 
         {status === 'offline' ? (
@@ -187,19 +245,26 @@ export default function App() {
         ) : null}
 
         <section className={`view view--${view}`} aria-label={meta.label}>
-          {view === 'room' ? <RoomView library={library} /> : null}
-          {view === 'reader' ? <ReaderView /> : null}
-          {view === 'map' ? <MapView library={library} /> : null}
-          {view === 'librarian' ? <LibrarianView library={library} /> : null}
-          {view === 'index' ? <IndexView library={library} books={books} /> : null}
+          <Suspense fallback={<ViewLoadingFallback label={meta.title} />}>
+            {view === 'room' ? <RoomView library={library} /> : null}
+            {view === 'reader' ? <ReaderView /> : null}
+            {view === 'map' ? <MapView library={library} /> : null}
+            {view === 'librarian' ? <LibrarianView library={library} /> : null}
+            {view === 'index' ? <IndexView library={library} books={books} /> : null}
+          </Suspense>
         </section>
       </main>
 
       <QueueTray />
       <MusicDock />
       <SearchOverlay />
-      <SettingsDialog library={library} />
+      {settingsOpen ? (
+        <Suspense fallback={null}>
+          <SettingsDialog library={library} />
+        </Suspense>
+      ) : null}
       <WelcomeCard />
+      <OfflineIndicator />
 
       {dragging ? (
         <div className="drop-overlay" aria-hidden="true">

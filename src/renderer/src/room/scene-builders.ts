@@ -65,11 +65,33 @@ export interface SpinePlacement {
   cell: SpineCell
 }
 
+export interface RollingLadderRig {
+  group: THREE.Group
+  axis: 'x' | 'z'
+  minOffset: number
+  maxOffset: number
+  currentOffset: number
+  targetOffset: number
+  vantagePos: THREE.Vector3
+  lookAt: THREE.Vector3
+  label: string
+}
+
 export interface RoomAnchor {
   id: string
   label: string
   meta?: string
-  kind: 'overview' | 'shelf' | 'desk' | 'globe' | 'gramophone' | 'fireplace' | 'balcony' | 'stairs'
+  kind:
+    | 'overview'
+    | 'shelf'
+    | 'desk'
+    | 'globe'
+    | 'gramophone'
+    | 'fireplace'
+    | 'balcony'
+    | 'stairs'
+    | 'nook'
+    | 'ladder'
   shelfId?: number
   level: 1 | 2
   position: THREE.Vector3
@@ -93,6 +115,9 @@ export interface BuiltRoomScene {
   windowHalos: THREE.Sprite[]
   hearthLight: THREE.PointLight | null
   hearthFlame: THREE.Mesh | null
+  hearthEmbers: THREE.Points | null
+  nookCandleLight: THREE.PointLight | null
+  rollingLadders: RollingLadderRig[]
   orreryRings: THREE.Object3D[]
   disposables: {
     textures: THREE.Texture[]
@@ -104,6 +129,33 @@ export interface BuiltRoomScene {
 function truncate(text: string, length: number): string {
   const value = text.trim()
   return value.length > length ? `${value.slice(0, length - 1)}…` : value
+}
+
+const ROOM_TEXTURE_CACHE_LIMIT = 32
+const ROOM_TEXTURE_CACHE = new Map<string, THREE.CanvasTexture>()
+
+function getCachedRoomTexture(
+  key: string,
+  factory: () => THREE.CanvasTexture
+): THREE.CanvasTexture {
+  const existing = ROOM_TEXTURE_CACHE.get(key)
+  if (existing) {
+    // Refresh recency for LRU ordering
+    ROOM_TEXTURE_CACHE.delete(key)
+    ROOM_TEXTURE_CACHE.set(key, existing)
+    return existing
+  }
+  const created = factory()
+  ROOM_TEXTURE_CACHE.set(key, created)
+  if (ROOM_TEXTURE_CACHE.size > ROOM_TEXTURE_CACHE_LIMIT) {
+    const oldestKey = ROOM_TEXTURE_CACHE.keys().next().value
+    if (oldestKey !== undefined) {
+      const oldest = ROOM_TEXTURE_CACHE.get(oldestKey)
+      ROOM_TEXTURE_CACHE.delete(oldestKey)
+      oldest?.dispose()
+    }
+  }
+  return created
 }
 
 function createRadialTexture(stops: Array<[number, string]>): THREE.CanvasTexture {
@@ -849,20 +901,32 @@ export function buildLibraryScene(
   }
 
   const anisotropy = isSoftwareGl ? 1 : Math.min(maxAnisotropy, 8)
-  const floorTex = trackTex(createGrandFloorTexture(anisotropy, palette))
-  const wallTex = trackTex(createGrandWallTexture(anisotropy, palette))
-  const rugTex = trackTex(createRunnerRugTexture(anisotropy, palette))
-  const windowTex = trackTex(createWindowTexture(anisotropy, mood))
-  const oculusTex = trackTex(createOculusTexture(anisotropy, palette, mood))
-  const globeTex = trackTex(createGlobeTexture(anisotropy, palette))
-  const shadowTex = trackTex(
+  const floorTex = getCachedRoomTexture(`floor:${theme}:${anisotropy}`, () =>
+    createGrandFloorTexture(anisotropy, palette)
+  )
+  const wallTex = getCachedRoomTexture(`wall:${theme}:${anisotropy}`, () =>
+    createGrandWallTexture(anisotropy, palette)
+  )
+  const rugTex = getCachedRoomTexture(`rug:${theme}:${anisotropy}`, () =>
+    createRunnerRugTexture(anisotropy, palette)
+  )
+  const windowTex = getCachedRoomTexture(`window:${mood}:${anisotropy}`, () =>
+    createWindowTexture(anisotropy, mood)
+  )
+  const oculusTex = getCachedRoomTexture(`oculus:${theme}:${mood}:${anisotropy}`, () =>
+    createOculusTexture(anisotropy, palette, mood)
+  )
+  const globeTex = getCachedRoomTexture(`globe:${theme}:${anisotropy}`, () =>
+    createGlobeTexture(anisotropy, palette)
+  )
+  const shadowTex = getCachedRoomTexture('radial:shadow', () =>
     createRadialTexture([
       [0, 'rgba(0,0,0,0.48)'],
       [0.55, 'rgba(0,0,0,0.2)'],
       [1, 'rgba(0,0,0,0)']
     ])
   )
-  const glowTex = trackTex(
+  const glowTex = getCachedRoomTexture('radial:glow', () =>
     createRadialTexture([
       [0, 'rgba(255,216,154,0.9)'],
       [0.45, 'rgba(255,182,98,0.28)'],
@@ -1058,15 +1122,17 @@ export function buildLibraryScene(
   }
   group.add(oculusGroup)
 
-  // 4. Walkable Upper Mezzanine Balcony (y = GALLERY_Y, widened 1.55m decks, open stairwell SE)
+  // 4. Wide Grand Gallery Upper Mezzanine (y = GALLERY_Y, generous 2.15m decks, open stairwell SE)
   const galleryY = GALLERY_Y
   const walkwayDepth = WALKWAY_DEPTH
-  const swBalconyLen = STAIR_SPEC.southBalconyMaxX + ROOM_WIDTH / 2 // 1.55 + 8 = 9.55
+  const swBalconyLen = STAIR_SPEC.southBalconyMaxX + ROOM_WIDTH / 2 // 1.65 + 8 = 9.65
   const swBalconyCenterX = -ROOM_WIDTH / 2 + swBalconyLen / 2
   const eastDeckMinZ = -ROOM_DEPTH / 2 + walkwayDepth
   const eastDeckMaxZ = STAIR_SPEC.f2EndZ
   const eastDeckLen = eastDeckMaxZ - eastDeckMinZ
   const eastDeckCenterZ = (eastDeckMinZ + eastDeckMaxZ) / 2
+  const innerEdgeX = ROOM_WIDTH / 2 - walkwayDepth // 5.85
+  const innerEdgeZ = ROOM_DEPTH / 2 - walkwayDepth // 4.85
 
   interface GallerySide {
     pos: [number, number, number]
@@ -1079,45 +1145,45 @@ export function buildLibraryScene(
   }
 
   const gallerySides: GallerySide[] = [
-    // North Balcony (full width)
+    // North Grand Gallery (full width)
     {
       pos: [0, galleryY - 0.11, -ROOM_DEPTH / 2 + walkwayDepth / 2],
       deckSize: [ROOM_WIDTH, 0.22, walkwayDepth],
-      railPos: [0, galleryY + 0.92, -ROOM_DEPTH / 2 + walkwayDepth - 0.06],
+      railPos: [0, galleryY + 0.92, -innerEdgeZ - 0.04],
       railSize: [ROOM_WIDTH - walkwayDepth * 2, 0.06, 0.08],
-      railStart: -(ROOM_WIDTH / 2 - walkwayDepth),
-      railEnd: ROOM_WIDTH / 2 - walkwayDepth,
+      railStart: -innerEdgeX,
+      railEnd: innerEdgeX,
       axis: 'x'
     },
-    // West Balcony (full depth)
+    // West Grand Gallery (full depth between North & South decks)
     {
       pos: [-ROOM_WIDTH / 2 + walkwayDepth / 2, galleryY - 0.11, 0],
       deckSize: [walkwayDepth, 0.22, ROOM_DEPTH - walkwayDepth * 2],
-      railPos: [-ROOM_WIDTH / 2 + walkwayDepth - 0.06, galleryY + 0.92, 0],
+      railPos: [-innerEdgeX - 0.04, galleryY + 0.92, 0],
       railSize: [0.08, 0.06, ROOM_DEPTH - walkwayDepth * 2],
-      railStart: -(ROOM_DEPTH / 2 - walkwayDepth),
-      railEnd: ROOM_DEPTH / 2 - walkwayDepth,
+      railStart: -innerEdgeZ,
+      railEnd: innerEdgeZ,
       axis: 'z'
     },
-    // South-West Balcony (stops cleanly at stairwell opening x = 1.55)
+    // South-West Grand Gallery (stops cleanly at stairwell opening x = 1.65)
     {
       pos: [swBalconyCenterX, galleryY - 0.11, ROOM_DEPTH / 2 - walkwayDepth / 2],
       deckSize: [swBalconyLen, 0.22, walkwayDepth],
       railPos: [
-        (-ROOM_WIDTH / 2 + walkwayDepth + STAIR_SPEC.southBalconyMaxX) / 2,
+        (-innerEdgeX + STAIR_SPEC.southBalconyMaxX) / 2,
         galleryY + 0.92,
-        ROOM_DEPTH / 2 - walkwayDepth + 0.06
+        innerEdgeZ + 0.04
       ],
-      railSize: [STAIR_SPEC.southBalconyMaxX - (-ROOM_WIDTH / 2 + walkwayDepth), 0.06, 0.08],
-      railStart: -ROOM_WIDTH / 2 + walkwayDepth,
+      railSize: [STAIR_SPEC.southBalconyMaxX + innerEdgeX, 0.06, 0.08],
+      railStart: -innerEdgeX,
       railEnd: STAIR_SPEC.southBalconyMaxX,
       axis: 'x'
     },
-    // East Balcony (North of top of Flight 2 at z = 1.05)
+    // East Grand Gallery (North of top of Flight 2 at z = 1.25, exact 2.15m width!)
     {
       pos: [ROOM_WIDTH / 2 - walkwayDepth / 2, galleryY - 0.11, eastDeckCenterZ],
       deckSize: [walkwayDepth, 0.22, eastDeckLen],
-      railPos: [ROOM_WIDTH / 2 - walkwayDepth + 0.06, galleryY + 0.92, eastDeckCenterZ],
+      railPos: [innerEdgeX + 0.04, galleryY + 0.92, eastDeckCenterZ],
       railSize: [0.08, 0.06, eastDeckLen],
       railStart: eastDeckMinZ,
       railEnd: eastDeckMaxZ,
@@ -1150,12 +1216,13 @@ export function buildLibraryScene(
     interactables.push(topCap)
 
     const railLen = Math.abs(side.railEnd - side.railStart)
+    // Lower walnut apron fascia + brass inlay molding
     const fascia = new THREE.Mesh(
       trackGeo(
         new THREE.BoxGeometry(
-          side.axis === 'x' ? railLen : 0.03,
-          0.035,
-          side.axis === 'z' ? railLen : 0.03
+          side.axis === 'x' ? railLen + 0.08 : 0.04,
+          0.045,
+          side.axis === 'z' ? railLen + 0.08 : 0.04
         )
       ),
       brassMat
@@ -1163,11 +1230,24 @@ export function buildLibraryScene(
     fascia.position.set(side.railPos[0], galleryY - 0.02, side.railPos[2])
     group.add(fascia)
 
+    const bottomShoe = new THREE.Mesh(
+      trackGeo(
+        new THREE.BoxGeometry(
+          side.axis === 'x' ? railLen + 0.08 : 0.09,
+          0.06,
+          side.axis === 'z' ? railLen + 0.08 : 0.09
+        )
+      ),
+      woodMat
+    )
+    bottomShoe.position.set(side.railPos[0], galleryY + 0.03, side.railPos[2])
+    group.add(bottomShoe)
+
     const rail = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(...side.railSize)), brassMat)
     rail.position.set(...side.railPos)
     group.add(rail)
 
-    const count = Math.max(2, Math.floor(railLen / 0.36))
+    const count = Math.max(2, Math.floor(railLen / 0.34))
     for (let i = 0; i <= count; i += 1) {
       const t = side.railStart + (i / count) * railLen
       if (side.axis === 'x') {
@@ -1178,22 +1258,46 @@ export function buildLibraryScene(
     }
   }
 
-  // Return end-railing at the South-West balcony edge overlooking the Grand Staircase
+  // Gallery corner newel posts with brass finials for clean structural joins
+  const addNewelPost = (nx: number, baseY: number, nz: number, height = 1.0): void => {
+    const post = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(0.14, height, 0.14)), woodMat)
+    post.position.set(nx, baseY + height / 2, nz)
+    post.castShadow = true
+    group.add(post)
+    const collar = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(0.17, 0.035, 0.17)), brassMat)
+    collar.position.set(nx, baseY + height, nz)
+    group.add(collar)
+    const finial = new THREE.Mesh(trackGeo(new THREE.SphereGeometry(0.068, 12, 12)), brassMat)
+    finial.position.set(nx, baseY + height + 0.068, nz)
+    group.add(finial)
+  }
+
+  addNewelPost(-innerEdgeX - 0.04, galleryY, -innerEdgeZ - 0.04)
+  addNewelPost(innerEdgeX + 0.04, galleryY, -innerEdgeZ - 0.04)
+  addNewelPost(-innerEdgeX - 0.04, galleryY, innerEdgeZ + 0.04)
+  addNewelPost(STAIR_SPEC.southBalconyMaxX, galleryY, innerEdgeZ + 0.04)
+  addNewelPost(innerEdgeX + 0.04, galleryY, STAIR_SPEC.f2EndZ)
+
+  // Return end-railing at the South-West balcony edge overlooking the Flush Corner Staircase
   const swReturnRail = new THREE.Mesh(
     trackGeo(new THREE.BoxGeometry(0.08, 0.06, walkwayDepth - 0.08)),
     brassMat
   )
-  swReturnRail.position.set(STAIR_SPEC.southBalconyMaxX, galleryY + 0.92, ROOM_DEPTH / 2 - walkwayDepth / 2)
+  swReturnRail.position.set(
+    STAIR_SPEC.southBalconyMaxX,
+    galleryY + 0.92,
+    ROOM_DEPTH / 2 - walkwayDepth / 2
+  )
   group.add(swReturnRail)
-  for (let i = 0; i <= 4; i += 1) {
+  for (let i = 0; i <= 5; i += 1) {
     balusterPositions.push([
       STAIR_SPEC.southBalconyMaxX,
       galleryY + 0.46,
-      ROOM_DEPTH / 2 - walkwayDepth + 0.12 + (i / 4) * (walkwayDepth - 0.24)
+      innerEdgeZ + 0.14 + (i / 5) * (walkwayDepth - 0.28)
     ])
   }
 
-  // 4b. Grand Twin-Flight Walnut & Brass Staircase (South-East corner -> East Mezzanine)
+  // 4b. Flush South-East Corner Grand Staircase (anchored tightly to South & East walls!)
   const stairStepsF1 = 12
   const f1Len = STAIR_SPEC.f1EndX - STAIR_SPEC.f1StartX
   const f1Width = STAIR_SPEC.f1MaxZ - STAIR_SPEC.f1MinZ
@@ -1201,15 +1305,28 @@ export function buildLibraryScene(
   const stepRun1 = f1Len / stairStepsF1
   const stepRise1 = STAIR_SPEC.midY / stairStepsF1
 
+  // Architectural walnut wainscoting enclosure under Flight 1 (eliminates Z-fighting solid blocks)
   for (let i = 0; i < stairStepsF1; i += 1) {
     const sx = STAIR_SPEC.f1StartX + (i + 0.5) * stepRun1
     const sy = (i + 1) * stepRise1
-    // Solid step block
+
+    // Recessed under-step support panel
+    if (sy > 0.08) {
+      const underPanel = new THREE.Mesh(
+        trackGeo(new THREE.BoxGeometry(stepRun1 - 0.004, sy - 0.05, f1Width - 0.06)),
+        woodDarkMat
+      )
+      underPanel.position.set(sx, (sy - 0.05) / 2, f1CenterZ + 0.02)
+      underPanel.receiveShadow = true
+      group.add(underPanel)
+    }
+
+    // Overhanging walnut bullnose tread plank
     const tread = new THREE.Mesh(
-      trackGeo(new THREE.BoxGeometry(stepRun1 + 0.03, sy, f1Width)),
-      woodDarkMat
+      trackGeo(new THREE.BoxGeometry(stepRun1 + 0.035, 0.055, f1Width)),
+      woodMat
     )
-    tread.position.set(sx, sy / 2, f1CenterZ)
+    tread.position.set(sx - 0.008, sy - 0.0275, f1CenterZ)
     tread.castShadow = true
     tread.receiveShadow = true
     tread.userData.walkableFloor = true
@@ -1217,63 +1334,89 @@ export function buildLibraryScene(
     group.add(tread)
     interactables.push(tread)
 
-    // Carpeted center runner on each tread + brass stair rod
+    // Woven crimson runner carpet & gilded brass stair rod
     const stepRug = new THREE.Mesh(
-      trackGeo(new THREE.BoxGeometry(stepRun1 + 0.01, 0.016, f1Width * 0.64)),
+      trackGeo(new THREE.BoxGeometry(stepRun1 + 0.01, 0.015, f1Width * 0.62)),
       rugMat
     )
     stepRug.position.set(sx, sy + 0.008, f1CenterZ)
     group.add(stepRug)
 
     const nosing = new THREE.Mesh(
-      trackGeo(new THREE.BoxGeometry(0.025, 0.018, f1Width * 0.72)),
+      trackGeo(new THREE.CylinderGeometry(0.011, 0.011, f1Width * 0.68, 8)),
       brassMat
     )
+    nosing.rotation.x = Math.PI / 2
     nosing.position.set(sx - stepRun1 / 2 + 0.012, sy + 0.012, f1CenterZ)
     group.add(nosing)
 
-    // Inner nave-side baluster along Flight 1
-    balusterPositions.push([sx, sy + 0.45, STAIR_SPEC.f1MinZ + 0.05])
+    balusterPositions.push([sx, sy + 0.46, STAIR_SPEC.f1MinZ + 0.05])
   }
 
-  // Flight 1 sloped brass handrail + ornate starting newel post
+  // Flight 1 sloped walnut stringer beam & continuous brass handrail
   const f1SlopeLen = Math.hypot(f1Len, STAIR_SPEC.midY)
+  const f1Angle = Math.atan2(STAIR_SPEC.midY, f1Len)
+  const f1Stringer = new THREE.Mesh(
+    trackGeo(new THREE.BoxGeometry(f1SlopeLen + 0.14, 0.24, 0.09)),
+    woodMat
+  )
+  f1Stringer.position.set(
+    (STAIR_SPEC.f1StartX + STAIR_SPEC.f1EndX) / 2,
+    STAIR_SPEC.midY / 2 - 0.04,
+    STAIR_SPEC.f1MinZ + 0.03
+  )
+  f1Stringer.rotation.z = f1Angle
+  f1Stringer.castShadow = true
+  group.add(f1Stringer)
+
   const f1Rail = new THREE.Mesh(
-    trackGeo(new THREE.BoxGeometry(f1SlopeLen, 0.06, 0.075)),
+    trackGeo(new THREE.BoxGeometry(f1SlopeLen + 0.08, 0.058, 0.075)),
     brassMat
   )
   f1Rail.position.set(
     (STAIR_SPEC.f1StartX + STAIR_SPEC.f1EndX) / 2,
-    STAIR_SPEC.midY / 2 + 0.9,
+    STAIR_SPEC.midY / 2 + 0.92,
     STAIR_SPEC.f1MinZ + 0.05
   )
-  f1Rail.rotation.z = Math.atan2(STAIR_SPEC.midY, f1Len)
+  f1Rail.rotation.z = f1Angle
   group.add(f1Rail)
 
-  const newelPost = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(0.18, 1.05, 0.18)), woodMat)
-  newelPost.position.set(STAIR_SPEC.f1StartX - 0.04, 0.525, STAIR_SPEC.f1MinZ + 0.05)
-  group.add(newelPost)
-  const newelFinial = new THREE.Mesh(trackGeo(new THREE.SphereGeometry(0.085, 14, 14)), brassMat)
-  newelFinial.position.set(STAIR_SPEC.f1StartX - 0.04, 1.12, STAIR_SPEC.f1MinZ + 0.05)
-  group.add(newelFinial)
+  // Starting & mid-landing corner newel posts
+  addNewelPost(STAIR_SPEC.f1StartX - 0.04, 0, STAIR_SPEC.f1MinZ + 0.05, 1.02)
+  addNewelPost(STAIR_SPEC.landingMinX + 0.04, STAIR_SPEC.midY, STAIR_SPEC.landingMinZ + 0.04, 0.98)
 
-  // Mid-Landing platform
+  // Flush South-East Corner Mid-Landing (tightly anchored to South & East walls)
   const landW = STAIR_SPEC.landingMaxX - STAIR_SPEC.landingMinX
   const landD = STAIR_SPEC.landingMaxZ - STAIR_SPEC.landingMinZ
   const landCenterX = (STAIR_SPEC.landingMinX + STAIR_SPEC.landingMaxX) / 2
   const landCenterZ = (STAIR_SPEC.landingMinZ + STAIR_SPEC.landingMaxZ) / 2
   const midLanding = new THREE.Mesh(
-    trackGeo(new THREE.BoxGeometry(landW, STAIR_SPEC.midY, landD)),
+    trackGeo(new THREE.BoxGeometry(landW, STAIR_SPEC.midY - 0.04, landD)),
     woodDarkMat
   )
-  midLanding.position.set(landCenterX, STAIR_SPEC.midY / 2, landCenterZ)
+  midLanding.position.set(landCenterX, (STAIR_SPEC.midY - 0.04) / 2, landCenterZ)
   midLanding.receiveShadow = true
-  midLanding.userData.walkableFloor = true
-  midLanding.userData.walkLevel = 2
   group.add(midLanding)
-  interactables.push(midLanding)
 
-  // Flight 2 (Mid-Landing -> East Mezzanine, climbing North)
+  const midLandingCap = new THREE.Mesh(
+    trackGeo(new THREE.BoxGeometry(landW, 0.06, landD)),
+    woodMat
+  )
+  midLandingCap.position.set(landCenterX, STAIR_SPEC.midY - 0.025, landCenterZ)
+  midLandingCap.receiveShadow = true
+  midLandingCap.userData.walkableFloor = true
+  midLandingCap.userData.walkLevel = 2
+  group.add(midLandingCap)
+  interactables.push(midLandingCap)
+
+  const landingRug = new THREE.Mesh(
+    trackGeo(new THREE.BoxGeometry(landW * 0.68, 0.015, landD * 0.68)),
+    rugMat
+  )
+  landingRug.position.set(landCenterX, STAIR_SPEC.midY + 0.012, landCenterZ)
+  group.add(landingRug)
+
+  // Flight 2 (Mid-Landing -> Wide East Mezzanine, flush against East wall, exact 2.15m width!)
   const stairStepsF2 = 12
   const f2Len = STAIR_SPEC.f2StartZ - STAIR_SPEC.f2EndZ
   const f2Width = STAIR_SPEC.f2MaxX - STAIR_SPEC.f2MinX
@@ -1281,14 +1424,31 @@ export function buildLibraryScene(
   const stepRun2 = f2Len / stairStepsF2
   const stepRise2 = (galleryY - STAIR_SPEC.midY) / stairStepsF2
 
+  // Recessed wainscoting wall beneath Flight 2 with framed walnut molding
+  const underF2Wall = new THREE.Mesh(
+    trackGeo(new THREE.BoxGeometry(f2Width - 0.06, STAIR_SPEC.midY, f2Len)),
+    woodDarkMat
+  )
+  underF2Wall.position.set(f2CenterX + 0.03, STAIR_SPEC.midY / 2, (STAIR_SPEC.f2StartZ + STAIR_SPEC.f2EndZ) / 2)
+  underF2Wall.receiveShadow = true
+  group.add(underF2Wall)
+
   for (let i = 0; i < stairStepsF2; i += 1) {
     const sz = STAIR_SPEC.f2StartZ - (i + 0.5) * stepRun2
     const sy = STAIR_SPEC.midY + (i + 1) * stepRise2
-    const tread = new THREE.Mesh(
-      trackGeo(new THREE.BoxGeometry(f2Width, sy, stepRun2 + 0.03)),
+
+    const riserFill = new THREE.Mesh(
+      trackGeo(new THREE.BoxGeometry(f2Width - 0.06, sy - STAIR_SPEC.midY, stepRun2 - 0.004)),
       woodDarkMat
     )
-    tread.position.set(f2CenterX, sy / 2, sz)
+    riserFill.position.set(f2CenterX + 0.03, STAIR_SPEC.midY + (sy - STAIR_SPEC.midY) / 2 - 0.025, sz)
+    group.add(riserFill)
+
+    const tread = new THREE.Mesh(
+      trackGeo(new THREE.BoxGeometry(f2Width, 0.055, stepRun2 + 0.035)),
+      woodMat
+    )
+    tread.position.set(f2CenterX, sy - 0.0275, sz + 0.008)
     tread.castShadow = true
     tread.receiveShadow = true
     tread.userData.walkableFloor = true
@@ -1297,37 +1457,58 @@ export function buildLibraryScene(
     interactables.push(tread)
 
     const stepRug = new THREE.Mesh(
-      trackGeo(new THREE.BoxGeometry(f2Width * 0.64, 0.016, stepRun2 + 0.01)),
+      trackGeo(new THREE.BoxGeometry(f2Width * 0.58, 0.015, stepRun2 + 0.01)),
       rugMat
     )
     stepRug.position.set(f2CenterX, sy + 0.008, sz)
     group.add(stepRug)
 
     const nosing = new THREE.Mesh(
-      trackGeo(new THREE.BoxGeometry(f2Width * 0.72, 0.018, 0.025)),
+      trackGeo(new THREE.CylinderGeometry(0.011, 0.011, f2Width * 0.64, 8)),
       brassMat
     )
+    nosing.rotation.z = Math.PI / 2
     nosing.position.set(f2CenterX, sy + 0.012, sz + stepRun2 / 2 - 0.012)
     group.add(nosing)
 
-    balusterPositions.push([STAIR_SPEC.f2MinX + 0.05, sy + 0.45, sz])
+    balusterPositions.push([STAIR_SPEC.f2MinX + 0.04, sy + 0.46, sz])
   }
 
+  // Flight 2 sloped walnut stringer & continuous brass handrail joining East balcony top newel
   const f2SlopeLen = Math.hypot(f2Len, galleryY - STAIR_SPEC.midY)
+  const f2Angle = Math.atan2(galleryY - STAIR_SPEC.midY, f2Len)
+  const f2Stringer = new THREE.Mesh(
+    trackGeo(new THREE.BoxGeometry(0.09, 0.24, f2SlopeLen + 0.14)),
+    woodMat
+  )
+  f2Stringer.position.set(
+    STAIR_SPEC.f2MinX + 0.03,
+    (STAIR_SPEC.midY + galleryY) / 2 - 0.04,
+    (STAIR_SPEC.f2StartZ + STAIR_SPEC.f2EndZ) / 2
+  )
+  f2Stringer.rotation.x = f2Angle
+  f2Stringer.castShadow = true
+  group.add(f2Stringer)
+
   const f2Rail = new THREE.Mesh(
-    trackGeo(new THREE.BoxGeometry(0.075, 0.06, f2SlopeLen)),
+    trackGeo(new THREE.BoxGeometry(0.075, 0.058, f2SlopeLen + 0.08)),
     brassMat
   )
   f2Rail.position.set(
-    STAIR_SPEC.f2MinX + 0.05,
-    (STAIR_SPEC.midY + galleryY) / 2 + 0.9,
+    STAIR_SPEC.f2MinX + 0.04,
+    (STAIR_SPEC.midY + galleryY) / 2 + 0.92,
     (STAIR_SPEC.f2StartZ + STAIR_SPEC.f2EndZ) / 2
   )
-  f2Rail.rotation.x = Math.atan2(galleryY - STAIR_SPEC.midY, f2Len)
+  f2Rail.rotation.x = f2Angle
   group.add(f2Rail)
 
-  // Instanced balusters for mezzanine + both staircase flights (1 draw call!)
-  const balusterGeo = trackGeo(new THREE.CylinderGeometry(0.02, 0.028, 0.82, 8))
+  // Warm brass wall sconce illuminating the corner landing
+  const landingSconce = new THREE.PointLight('#ffca82', mood === 'afternoon' ? 2.2 : 5.5, 6.5, 1.5)
+  landingSconce.position.set(ROOM_WIDTH / 2 - 0.42, STAIR_SPEC.midY + 1.65, ROOM_DEPTH / 2 - 0.85)
+  group.add(landingSconce)
+
+  // Instanced balusters for wide gallery + both flush staircase flights (1 draw call!)
+  const balusterGeo = trackGeo(new THREE.CylinderGeometry(0.02, 0.028, 0.84, 8))
   const balusterInst = new THREE.InstancedMesh(balusterGeo, trimMat, balusterPositions.length)
   const dummy = new THREE.Object3D()
   balusterPositions.forEach(([bx, by, bz], idx) => {
@@ -1339,60 +1520,243 @@ export function buildLibraryScene(
   balusterInst.computeBoundingSphere()
   group.add(balusterInst)
 
-  // Upper Mezzanine Antique Brass Observatory Telescope (NW Corner)
+  // 4c. Upper Mezzanine Interactive Brass Observatory Telescope (NW Corner Overlook)
   const scope = new THREE.Group()
-  scope.position.set(-6.35, galleryY, -6.15)
+  scope.position.set(-6.35, galleryY, -5.85)
   scope.rotation.y = Math.PI * 0.24
   for (let leg = 0; leg < 3; leg += 1) {
     const a = (leg / 3) * Math.PI * 2
-    const strut = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.018, 0.024, 1.25, 8)), woodMat)
+    const strut = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.018, 0.026, 1.28, 8)), woodMat)
     strut.position.set(Math.cos(a) * 0.22, 0.58, Math.sin(a) * 0.22)
     strut.rotation.z = -Math.cos(a) * 0.28
     strut.rotation.x = Math.sin(a) * 0.28
     scope.add(strut)
   }
-  const tube = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.055, 0.08, 1.05, 16)), brassMat)
-  tube.position.set(0, 1.32, 0)
+  const mountHub = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.065, 0.075, 0.14, 14)), brassMat)
+  mountHub.position.set(0, 1.18, 0)
+  mountHub.userData.interactiveKind = 'telescope'
+  mountHub.userData.interactLabel = 'Observatory Brass Telescope'
+  scope.add(mountHub)
+  interactables.push(mountHub)
+
+  const altitudeArc = new THREE.Mesh(
+    trackGeo(new THREE.TorusGeometry(0.18, 0.014, 8, 20, Math.PI)),
+    brassMat
+  )
+  altitudeArc.position.set(0, 1.24, 0)
+  altitudeArc.rotation.z = Math.PI
+  scope.add(altitudeArc)
+
+  const tube = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.052, 0.085, 1.12, 16)), brassMat)
+  tube.position.set(0.06, 1.35, 0)
   tube.rotation.z = Math.PI / 2 - 0.52
-  tube.userData.interactiveKind = 'balcony'
-  tube.userData.interactLabel = 'Upper Mezzanine Telescope'
+  tube.userData.interactiveKind = 'telescope'
+  tube.userData.interactLabel = 'Observatory Brass Telescope'
   scope.add(tube)
   interactables.push(tube)
+
+  const lensRing = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(0.086, 0.014, 10, 20)), trimMat)
+  lensRing.position.set(0.32, 1.62, 0)
+  lensRing.rotation.y = Math.PI / 2
+  lensRing.rotation.x = 0.52
+  scope.add(lensRing)
+
   group.add(scope)
 
-  // 5. Towering Fluted Colonnade Columns
+  // 4d. Secret Upper Study Nook (Far South-West Mezzanine Alcove)
+  let nookCandleLight: THREE.PointLight
+  {
+    const nook = new THREE.Group()
+    nook.position.set(0, galleryY, 0)
+
+    // Pierced carved walnut archway divider framing the nook at x = -4.2
+    const screenX = -4.2
+    const postGeo = trackGeo(new THREE.BoxGeometry(0.14, WALL_HEIGHT - galleryY - 0.25, 0.18))
+    const postA = new THREE.Mesh(postGeo, woodDarkMat)
+    postA.position.set(screenX, (WALL_HEIGHT - galleryY - 0.25) / 2, innerEdgeZ + 0.16)
+    nook.add(postA)
+    const postB = new THREE.Mesh(postGeo, woodDarkMat)
+    postB.position.set(screenX, (WALL_HEIGHT - galleryY - 0.25) / 2, ROOM_DEPTH / 2 - 0.18)
+    nook.add(postB)
+
+    const lintel = new THREE.Mesh(
+      trackGeo(new THREE.BoxGeometry(0.16, 0.28, walkwayDepth - 0.12)),
+      woodMat
+    )
+    lintel.position.set(screenX, 2.52, ROOM_DEPTH / 2 - walkwayDepth / 2)
+    nook.add(lintel)
+
+    const lintelTrim = new THREE.Mesh(
+      trackGeo(new THREE.BoxGeometry(0.18, 0.04, walkwayDepth - 0.1)),
+      brassMat
+    )
+    lintelTrim.position.set(screenX, 2.38, ROOM_DEPTH / 2 - walkwayDepth / 2)
+    nook.add(lintelTrim)
+
+    // Deep velvet crimson reading carpet inside the nook
+    const nookRug = new THREE.Mesh(
+      trackGeo(new THREE.BoxGeometry(2.85, 0.016, 1.55)),
+      rugMat
+    )
+    nookRug.position.set(-5.95, 0.012, ROOM_DEPTH / 2 - 1.05)
+    nookRug.receiveShadow = true
+    nook.add(nookRug)
+
+    // Tufted Leather Winged Reading Armchair tucked in the corner
+    const chair = new THREE.Group()
+    chair.position.set(-6.68, 0, ROOM_DEPTH / 2 - 0.92)
+    chair.rotation.y = Math.PI * 0.72
+
+    const seat = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(0.84, 0.24, 0.78)), leatherChairMat)
+    seat.position.set(0, 0.44, 0)
+    seat.castShadow = true
+    seat.userData.interactiveKind = 'nook'
+    seat.userData.interactLabel = 'Secret Study Nook Armchair'
+    chair.add(seat)
+    interactables.push(seat)
+
+    const back = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(0.84, 0.82, 0.2)), leatherChairMat)
+    back.position.set(0, 0.9, -0.3)
+    back.rotation.x = -0.1
+    back.userData.interactiveKind = 'nook'
+    back.userData.interactLabel = 'Secret Study Nook Armchair'
+    chair.add(back)
+    interactables.push(back)
+
+    for (const ax of [-0.36, 0.36]) {
+      const arm = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(0.16, 0.26, 0.72)), leatherChairMat)
+      arm.position.set(ax, 0.62, -0.02)
+      chair.add(arm)
+    }
+    for (const lx of [-0.34, 0.34]) {
+      for (const lz of [-0.3, 0.3]) {
+        const leg = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.03, 0.022, 0.32, 8)), woodDarkMat)
+        leg.position.set(lx, 0.16, lz)
+        chair.add(leg)
+      }
+    }
+    nook.add(chair)
+
+    // Brass-inlaid side lectern table holding the Rare Archival Codex + Candlestick Lamp
+    const table = new THREE.Group()
+    table.position.set(-5.72, 0, ROOM_DEPTH / 2 - 0.82)
+
+    const tTop = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.38, 0.36, 0.055, 20)), woodMat)
+    tTop.position.y = 0.74
+    tTop.userData.interactiveKind = 'nook-codex'
+    tTop.userData.interactLabel = 'Rare Archival Codex'
+    table.add(tTop)
+    interactables.push(tTop)
+
+    const tRim = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(0.38, 0.015, 8, 24)), brassMat)
+    tRim.rotation.x = Math.PI / 2
+    tRim.position.y = 0.75
+    table.add(tRim)
+
+    const tStem = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.055, 0.085, 0.72, 12)), woodDarkMat)
+    tStem.position.y = 0.36
+    table.add(tStem)
+
+    const tFoot = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.24, 0.28, 0.06, 16)), brassMat)
+    tFoot.position.y = 0.03
+    table.add(tFoot)
+
+    // Rare Archival Codex resting open on the nook table
+    const codexCover = new THREE.Mesh(
+      trackGeo(new THREE.BoxGeometry(0.34, 0.045, 0.26)),
+      trackMat(new THREE.MeshStandardMaterial({ color: '#611c17', roughness: 0.48, metalness: 0.16 }))
+    )
+    codexCover.position.set(-0.06, 0.79, 0.04)
+    codexCover.rotation.y = 0.22
+    codexCover.userData.interactiveKind = 'nook-codex'
+    codexCover.userData.interactLabel = 'Codex Alexandrinus: Lost Star Maps'
+    table.add(codexCover)
+    interactables.push(codexCover)
+
+    const codexTrim = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(0.355, 0.016, 0.275)), brassMat)
+    codexTrim.position.set(-0.06, 0.815, 0.04)
+    codexTrim.rotation.y = 0.22
+    table.add(codexTrim)
+
+    // Brass candlestick lamp with warm candle flame & glow
+    const cBase = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.065, 0.08, 0.04, 14)), brassMat)
+    cBase.position.set(0.18, 0.785, -0.1)
+    table.add(cBase)
+    const cStem = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.02, 0.025, 0.18, 10)), brassMat)
+    cStem.position.set(0.18, 0.88, -0.1)
+    table.add(cStem)
+    const wax = new THREE.Mesh(
+      trackGeo(new THREE.CylinderGeometry(0.022, 0.024, 0.12, 10)),
+      trackMat(new THREE.MeshStandardMaterial({ color: '#f2e6cf', roughness: 0.75 }))
+    )
+    wax.position.set(0.18, 1.02, -0.1)
+    table.add(wax)
+    const cFlame = new THREE.Mesh(
+      trackGeo(new THREE.ConeGeometry(0.02, 0.065, 8)),
+      trackMat(new THREE.MeshBasicMaterial({ color: '#ffcb6b' }))
+    )
+    cFlame.position.set(0.18, 1.11, -0.1)
+    table.add(cFlame)
+
+    nookCandleLight = new THREE.PointLight('#ffbd63', mood === 'afternoon' ? 2.6 : 6.4, 5.2, 1.5)
+    nookCandleLight.position.set(0.18, 1.24, -0.1)
+    table.add(nookCandleLight)
+
+    const cGlow = new THREE.Sprite(
+      trackMat(
+        new THREE.SpriteMaterial({
+          map: glowTex,
+          color: '#ffd080',
+          transparent: true,
+          opacity: 0.56,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false
+        })
+      )
+    )
+    cGlow.position.set(0.18, 1.14, -0.1)
+    cGlow.scale.set(0.72, 0.72, 1)
+    table.add(cGlow)
+    lampGlows.push(cGlow)
+
+    nook.add(table)
+    group.add(nook)
+  }
+
+  // 5. Structurally Aligned Ground-Floor Supporting Colonnade (flush under the 2.15m gallery apron!)
   const colPositions: Array<[number, number]> = [
-    [-ROOM_WIDTH / 2 + 1.45, -ROOM_DEPTH / 2 + 1.45],
-    [ROOM_WIDTH / 2 - 1.45, -ROOM_DEPTH / 2 + 1.45],
-    [-ROOM_WIDTH / 2 + 1.45, ROOM_DEPTH / 2 - 1.45],
-    [-ROOM_WIDTH / 2 + 1.45, -1.9],
-    [-ROOM_WIDTH / 2 + 1.45, 1.9],
-    [ROOM_WIDTH / 2 - 1.45, -2.2],
-    [-3.1, -ROOM_DEPTH / 2 + 1.45],
-    [3.1, -ROOM_DEPTH / 2 + 1.45],
-    [-3.1, ROOM_DEPTH / 2 - 1.45]
+    [-innerEdgeX, -innerEdgeZ],
+    [innerEdgeX, -innerEdgeZ],
+    [-innerEdgeX, innerEdgeZ],
+    [-innerEdgeX, -1.65],
+    [-innerEdgeX, 1.65],
+    [innerEdgeX, -1.75],
+    [-2.85, -innerEdgeZ],
+    [2.85, -innerEdgeZ],
+    [-2.85, innerEdgeZ]
   ]
 
-  const colPlinthGeo = trackGeo(new THREE.BoxGeometry(0.54, 0.4, 0.54))
-  const colShaftGeo = trackGeo(new THREE.CylinderGeometry(0.18, 0.21, WALL_HEIGHT - 0.85, 20))
-  const colRingGeo = trackGeo(new THREE.TorusGeometry(0.21, 0.028, 10, 20))
-  const colCapGeo = trackGeo(new THREE.BoxGeometry(0.58, 0.26, 0.58))
+  const lowerColH = galleryY - 0.22
+  const colPlinthGeo = trackGeo(new THREE.BoxGeometry(0.46, 0.34, 0.46))
+  const colShaftGeo = trackGeo(new THREE.CylinderGeometry(0.165, 0.195, lowerColH - 0.56, 20))
+  const colRingGeo = trackGeo(new THREE.TorusGeometry(0.19, 0.025, 10, 20))
+  const colCapGeo = trackGeo(new THREE.BoxGeometry(0.5, 0.22, 0.5))
 
   for (const [cx, cz] of colPositions) {
     const col = new THREE.Group()
     col.position.set(cx, 0, cz)
 
     const plinth = new THREE.Mesh(colPlinthGeo, woodDarkMat)
-    plinth.position.y = 0.2
+    plinth.position.y = 0.17
     col.add(plinth)
 
     const shaft = new THREE.Mesh(colShaftGeo, limestoneMat)
-    shaft.position.y = WALL_HEIGHT / 2 + 0.05
+    shaft.position.y = 0.34 + (lowerColH - 0.56) / 2
     shaft.castShadow = true
     shaft.receiveShadow = true
     col.add(shaft)
 
-    for (const ry of [0.44, galleryY, WALL_HEIGHT - 0.42]) {
+    for (const ry of [0.36, lowerColH - 0.24]) {
       const ring = new THREE.Mesh(colRingGeo, brassMat)
       ring.rotation.x = Math.PI / 2
       ring.position.y = ry
@@ -1400,7 +1764,7 @@ export function buildLibraryScene(
     }
 
     const cap = new THREE.Mesh(colCapGeo, stoneTrimMat)
-    cap.position.y = WALL_HEIGHT - 0.15
+    cap.position.y = lowerColH - 0.11
     col.add(cap)
 
     group.add(col)
@@ -1627,6 +1991,34 @@ export function buildLibraryScene(
   hearthLight.position.set(0, 0.68, 0.62)
   hearth.add(hearthLight)
 
+  // Floating hearth ember particles inside firebox
+  let hearthEmbers: THREE.Points | null = null
+  if (quality !== 'low') {
+    const emberCount = isSoftwareGl ? 14 : 28
+    const emberPos = new Float32Array(emberCount * 3)
+    for (let i = 0; i < emberCount; i += 1) {
+      emberPos[i * 3] = (Math.random() - 0.5) * 0.72
+      emberPos[i * 3 + 1] = 0.24 + Math.random() * 0.78
+      emberPos[i * 3 + 2] = 0.22 + (Math.random() - 0.5) * 0.18
+    }
+    const emberGeo = trackGeo(new THREE.BufferGeometry())
+    emberGeo.setAttribute('position', new THREE.BufferAttribute(emberPos, 3))
+    hearthEmbers = new THREE.Points(
+      emberGeo,
+      trackMat(
+        new THREE.PointsMaterial({
+          color: '#ffae45',
+          size: 0.036,
+          transparent: true,
+          opacity: 0.85,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false
+        })
+      )
+    )
+    hearth.add(hearthEmbers)
+  }
+
   group.add(hearth)
 
   // 8. Twin Two-Tier Grand Wrought-Brass Chandeliers
@@ -1769,19 +2161,20 @@ export function buildLibraryScene(
           offset = -((step * (gCount - 1)) / 2) + idx * step
         }
       } else if (wall === 'east') {
-        // Ground East wall stays north of Flight 2 (z <= 0.1); overflow bays ascend to East Mezzanine
+        // Ground East wall stays cleanly north of Flight 2 (z <= 1.25); overflow bays ascend to East Mezzanine
         const groundCap = 2
         if (idx >= groundCap) {
           level = 2
           const uIdx = idx - groundCap
-          offset = -4.2 + uIdx * 2.5
+          offset = -4.1 + uIdx * 2.55
         } else {
-          offset = -3.8 + idx * 2.65
+          offset = -3.85 + idx * 2.65
         }
       } else {
-        // South wall has Entrance Doors (x=0), Fireplace (x=-4.55), and Stairs (x>=1.95) -> place on South-West Mezzanine!
+        // South wall has Entrance Doors (x=0), Fireplace (x=-4.55), Stairs (x>=2.05) & Upper Secret Nook (x<=-4.2)
+        // Place South bays cleanly on the South-Central Upper Mezzanine between the Nook screen and Stairwell!
         level = 2
-        offset = -4.8 + idx * 2.55
+        offset = -2.15 + idx * 2.4
       }
 
       const baseY = level === 2 ? galleryY : 0
@@ -1957,7 +2350,7 @@ export function buildLibraryScene(
         const lookTarget = new THREE.Vector3(0, Math.min(2.15, shelfY + 0.24), 0).applyMatrix4(
           bayMatrix
         )
-        const standDist = level === 2 ? 0.92 : 2.2
+        const standDist = level === 2 ? 1.15 : 2.15
         const standPos = lookTarget.clone().addScaledVector(normal, standDist)
         standPos.y = baseY + EYE_HEIGHT
         const anchor: RoomAnchor = {
@@ -2438,39 +2831,58 @@ export function buildLibraryScene(
 
   anchors.push({
     id: 'stairs',
-    label: 'Grand Staircase',
-    meta: 'Ascend to Upper Mezzanine',
+    label: 'Flush Corner Staircase',
+    meta: 'Ascend South-East flights to Gallery',
     kind: 'stairs',
     level: 1,
-    position: new THREE.Vector3(1.4, EYE_HEIGHT, 5.65),
-    lookAt: new THREE.Vector3(5.6, 2.1, 5.65)
+    position: new THREE.Vector3(1.25, EYE_HEIGHT, 6.0),
+    lookAt: new THREE.Vector3(5.85, 1.95, 6.0)
   })
   miniMapMarkers.push({
     id: 'mm-stairs',
     anchorId: 'stairs',
-    label: 'Grand Staircase',
+    label: 'Flush Corner Staircase',
     kind: 'stairs',
-    x: 2.3,
-    z: 5.65,
+    x: 2.35,
+    z: 6.05,
     level: 1
   })
 
   anchors.push({
     id: 'balcony',
-    label: 'Upper Balcony Overlook',
-    meta: 'Mezzanine level · Telescope',
+    label: 'Observatory Overlook',
+    meta: 'Wide North-West Gallery · Brass Telescope',
     kind: 'balcony',
     level: 2,
-    position: new THREE.Vector3(-3.8, GALLERY_Y + EYE_HEIGHT, -6.15),
-    lookAt: new THREE.Vector3(0, 1.9, 0.5)
+    position: new THREE.Vector3(-5.2, GALLERY_Y + EYE_HEIGHT, -5.55),
+    lookAt: new THREE.Vector3(-6.35, GALLERY_Y + 1.35, -5.85)
   })
   miniMapMarkers.push({
     id: 'mm-balcony',
     anchorId: 'balcony',
-    label: 'Upper Balcony Overlook',
+    label: 'Observatory Telescope',
     kind: 'balcony',
-    x: -3.8,
-    z: -6.15,
+    x: -6.35,
+    z: -5.85,
+    level: 2
+  })
+
+  anchors.push({
+    id: 'nook',
+    label: 'Secret Study Nook',
+    meta: 'Candlelit South-West Alcove · Rare Codex',
+    kind: 'nook',
+    level: 2,
+    position: new THREE.Vector3(-4.55, GALLERY_Y + EYE_HEIGHT, 5.9),
+    lookAt: new THREE.Vector3(-6.2, GALLERY_Y + 0.85, 6.05)
+  })
+  miniMapMarkers.push({
+    id: 'mm-nook',
+    anchorId: 'nook',
+    label: 'Secret Study Nook',
+    kind: 'nook',
+    x: -6.1,
+    z: 6.0,
     level: 2
   })
 
@@ -2698,42 +3110,120 @@ export function buildLibraryScene(
     group.add(medallion)
   }
 
-  // 15c. Rolling Oak & Brass Library Ladders leaning along North & West bookcases
+  // 15c. Interactive Rolling Oak & Brass Bookshelf Ladders along North & West Brass Tracks
+  const rollingLadders: RollingLadderRig[] = []
   {
-    const buildLadder = (lx: number, lz: number, rotY: number): void => {
-      const ladder = new THREE.Group()
-      ladder.position.set(lx, 0, lz)
-      ladder.rotation.y = rotY
+    // Continuous tubular brass ladder tracks along North and West walls
+    const northTrack = new THREE.Mesh(
+      trackGeo(new THREE.CylinderGeometry(0.022, 0.022, ROOM_WIDTH - 4.2, 10)),
+      brassMat
+    )
+    northTrack.rotation.z = Math.PI / 2
+    northTrack.position.set(0, 3.38, -ROOM_DEPTH / 2 + 0.44)
+    group.add(northTrack)
 
-      const railGeo = trackGeo(new THREE.BoxGeometry(0.055, 3.55, 0.07))
+    const westTrack = new THREE.Mesh(
+      trackGeo(new THREE.CylinderGeometry(0.022, 0.022, ROOM_DEPTH - 4.6, 10)),
+      brassMat
+    )
+    westTrack.rotation.x = Math.PI / 2
+    westTrack.position.set(-ROOM_WIDTH / 2 + 0.44, 3.38, 0)
+    group.add(westTrack)
+
+    const buildInteractiveLadder = (config: {
+      index: number
+      lx: number
+      lz: number
+      rotY: number
+      axis: 'x' | 'z'
+      minOffset: number
+      maxOffset: number
+      label: string
+      vantagePos: THREE.Vector3
+      lookAt: THREE.Vector3
+    }): void => {
+      const ladder = new THREE.Group()
+      ladder.position.set(config.lx, 0, config.lz)
+      ladder.rotation.y = config.rotY
+
+      const railGeo = trackGeo(new THREE.BoxGeometry(0.058, 3.55, 0.072))
       for (const side of [-0.24, 0.24]) {
         const rail = new THREE.Mesh(railGeo, woodMat)
         rail.position.set(side, 1.72, 0.22)
         rail.rotation.x = -0.13
         rail.castShadow = true
+        rail.userData.interactiveKind = 'ladder'
+        rail.userData.ladderIndex = config.index
+        rail.userData.interactLabel = config.label
         ladder.add(rail)
+        interactables.push(rail)
 
-        // Brass top rail hook
-        const hook = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(0.055, 0.015, 8, 16)), brassMat)
-        hook.position.set(side, 3.44, -0.02)
+        // Brass top rail hook & rolling wheel
+        const hook = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(0.058, 0.016, 8, 16)), brassMat)
+        hook.position.set(side, 3.4, -0.02)
         hook.rotation.y = Math.PI / 2
         ladder.add(hook)
+
+        const wheel = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.04, 0.04, 0.03, 12)), brassMat)
+        wheel.rotation.z = Math.PI / 2
+        wheel.position.set(side, 0.045, 0.44)
+        ladder.add(wheel)
       }
 
-      const rungGeo = trackGeo(new THREE.CylinderGeometry(0.016, 0.016, 0.48, 8))
+      const rungGeo = trackGeo(new THREE.CylinderGeometry(0.017, 0.017, 0.48, 8))
       for (let step = 0; step < 10; step += 1) {
         const y = 0.32 + step * 0.31
         const z = 0.42 - step * 0.041
         const rung = new THREE.Mesh(rungGeo, brassMat)
         rung.rotation.z = Math.PI / 2
         rung.position.set(0, y, z)
+        rung.userData.interactiveKind = 'ladder'
+        rung.userData.ladderIndex = config.index
+        rung.userData.interactLabel = config.label
         ladder.add(rung)
+        interactables.push(rung)
       }
+
       group.add(ladder)
+      const initial = config.axis === 'x' ? config.lx : config.lz
+      rollingLadders.push({
+        group: ladder,
+        axis: config.axis,
+        minOffset: config.minOffset,
+        maxOffset: config.maxOffset,
+        currentOffset: initial,
+        targetOffset: initial,
+        vantagePos: config.vantagePos,
+        lookAt: config.lookAt,
+        label: config.label
+      })
     }
 
-    buildLadder(-2.95, -ROOM_DEPTH / 2 + 0.46, 0)
-    buildLadder(-ROOM_WIDTH / 2 + 0.46, -2.55, Math.PI / 2)
+    buildInteractiveLadder({
+      index: 0,
+      lx: -2.85,
+      lz: -ROOM_DEPTH / 2 + 0.46,
+      rotY: 0,
+      axis: 'x',
+      minOffset: -3.6,
+      maxOffset: 3.6,
+      label: 'North Rolling Ladder',
+      vantagePos: new THREE.Vector3(-2.6, GALLERY_Y + EYE_HEIGHT, -5.55),
+      lookAt: new THREE.Vector3(-2.6, GALLERY_Y + 1.15, -ROOM_DEPTH / 2 + 0.3)
+    })
+
+    buildInteractiveLadder({
+      index: 1,
+      lx: -ROOM_WIDTH / 2 + 0.46,
+      lz: -2.35,
+      rotY: Math.PI / 2,
+      axis: 'z',
+      minOffset: -3.2,
+      maxOffset: 2.6,
+      label: 'West Rolling Ladder',
+      vantagePos: new THREE.Vector3(-6.45, GALLERY_Y + EYE_HEIGHT, -2.1),
+      lookAt: new THREE.Vector3(-ROOM_WIDTH / 2 + 0.3, GALLERY_Y + 1.15, -2.1)
+    })
   }
 
   // 15d. Sculpted Classical Marble Scholar Busts & Warm Brass Tripod Braziers flanking the Hall
@@ -2905,6 +3395,9 @@ export function buildLibraryScene(
     windowHalos,
     hearthLight,
     hearthFlame,
+    hearthEmbers,
+    nookCandleLight,
+    rollingLadders,
     orreryRings,
     disposables
   }

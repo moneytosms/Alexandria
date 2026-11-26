@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Optional release tag (e.g. v0.2.0). Leave empty to update the rolling latest release.'
+        description: 'Optional release tag (e.g. v1.0.0). Leave empty to auto-release package.json version or update latest.'
         required: false
         default: ''
         type: string
@@ -55,14 +55,19 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      - name: Build web bundle
+      - name: Build web PWA bundle
         run: npm run build
+
+      - name: Build Android web bundle
+        run: npm run build:android
 
       - name: Resolve release metadata
         id: meta
         shell: bash
         env:
           INPUT_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           PKG_VERSION="$(node -p "require('./package.json').version")"
 
@@ -76,6 +81,12 @@ jobs:
             VERSION="${TAG#v}"
             IS_ROLLING="false"
             TITLE="Alexandria ${TAG}"
+          elif ! gh release view "v${PKG_VERSION}" >/dev/null 2>&1; then
+            # Auto-publish versioned release (e.g. v1.0.0) on push when not yet released
+            TAG="v${PKG_VERSION}"
+            VERSION="${PKG_VERSION}"
+            IS_ROLLING="false"
+            TITLE="Alexandria v${PKG_VERSION}"
           else
             TAG="latest"
             VERSION="${PKG_VERSION}"
@@ -83,6 +94,7 @@ jobs:
             TITLE="Alexandria Latest (v${PKG_VERSION})"
           fi
 
+          echo "Resolved release: tag=${TAG} version=${VERSION} rolling=${IS_ROLLING}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "is_rolling=${IS_ROLLING}" >> "$GITHUB_OUTPUT"
@@ -155,9 +167,139 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-android:
+    name: Package (android)
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android API 36 platform and build-tools
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Sync Android versionName and versionCode
+        shell: bash
+        run: |
+          VERSION="${{ needs.verify.outputs.version }}"
+          node -e '
+            const fs = require("fs");
+            const version = process.argv[1];
+            const m = version.match(/^(\d+)\.(\d+)\.(\d+)/);
+            const code = m ? Number(m[1]) * 10000 + Number(m[2]) * 100 + Number(m[3]) : 10000;
+            const gradlePath = "android/app/build.gradle";
+            let content = fs.readFileSync(gradlePath, "utf8");
+            content = content.replace(/versionCode\s+\d+/, `versionCode ${code}`);
+            content = content.replace(/versionName\s+"[^"]*"/, `versionName "${version}"`);
+            fs.writeFileSync(gradlePath, content, "utf8");
+            console.log(`Synced Android build.gradle -> versionName=${version} versionCode=${code}`);
+          ' "${VERSION}"
+
+      - name: Refresh launcher icons and splash screens
+        run: npm run icons
+
+      - name: Build and sync Capacitor Android assets
+        run: npm run sync:android
+
+      - name: Build Android Release APK
+        shell: bash
+        run: |
+          chmod +x android/gradlew
+          cd android
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Align and sign release APK
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.verify.outputs.version }}"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          BUILD_TOOLS_DIR="$(ls -d "${SDK_ROOT}"/build-tools/* | sort -V | tail -n 1)"
+          ZIPALIGN="${BUILD_TOOLS_DIR}/zipalign"
+          APKSIGNER="${BUILD_TOOLS_DIR}/apksigner"
+
+          UNSIGNED_APK="$(find android/app/build/outputs/apk/release -name '*.apk' | head -n 1)"
+          if [[ -z "${UNSIGNED_APK}" || ! -f "${UNSIGNED_APK}" ]]; then
+            echo "Could not find compiled release APK!" >&2
+            exit 1
+          fi
+
+          mkdir -p release-android
+          ALIGNED_APK="release-android/aligned.apk"
+          FINAL_APK="release-android/Alexandria-${VERSION}-android-universal.apk"
+          KEYSTORE_PATH="/tmp/alexandria-release.keystore"
+
+          if [[ -n "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            echo "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "${KEYSTORE_PATH}"
+            KS_PASS="${ANDROID_KEYSTORE_PASSWORD}"
+            KEY_ALIAS="${ANDROID_KEY_ALIAS:-alexandria}"
+            KEY_PASS="${ANDROID_KEY_PASSWORD:-${KS_PASS}}"
+          else
+            # Self-sign release APK so Android devices install it cleanly out of the box
+            KS_PASS="alexandria-release-key"
+            KEY_ALIAS="alexandria"
+            KEY_PASS="${KS_PASS}"
+            keytool -genkeypair -v \
+              -keystore "${KEYSTORE_PATH}" \
+              -alias "${KEY_ALIAS}" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "${KS_PASS}" \
+              -keypass "${KEY_PASS}" \
+              -dname "CN=Alexandria, OU=Library, O=Alexandria, L=Local, S=Local, C=US"
+          fi
+
+          "${ZIPALIGN}" -f -p 4 "${UNSIGNED_APK}" "${ALIGNED_APK}"
+          "${APKSIGNER}" sign \
+            --ks "${KEYSTORE_PATH}" \
+            --ks-key-alias "${KEY_ALIAS}" \
+            --ks-pass "pass:${KS_PASS}" \
+            --key-pass "pass:${KEY_PASS}" \
+            --out "${FINAL_APK}" \
+            "${ALIGNED_APK}"
+          "${APKSIGNER}" verify --verbose "${FINAL_APK}"
+          rm -f "${ALIGNED_APK}" "${KEYSTORE_PATH}"
+          ls -lh "${FINAL_APK}"
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-android
+          path: release-android/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Publish GitHub Release
-    needs: [verify, build]
+    needs: [verify, build, build-android]
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -179,7 +321,7 @@ jobs:
         working-directory: dist-release
         run: |
           shopt -s nullglob
-          FILES=(*.AppImage *.deb *.exe *.dmg *.zip)
+          FILES=(*.AppImage *.deb *.exe *.dmg *.zip *.apk)
           if [[ ${#FILES[@]} -eq 0 ]]; then
             echo "No release binaries found to publish!" >&2
             exit 1
@@ -198,9 +340,9 @@ jobs:
 
           {
             if [[ "${IS_ROLLING}" == "true" ]]; then
-              echo "Automated rolling desktop build from \`${GITHUB_REF_NAME}\` (\`${SHORT_SHA}\`) — built ${BUILD_DATE}."
+              echo "Automated rolling desktop & Android build from \`${GITHUB_REF_NAME}\` (\`${SHORT_SHA}\`) — built ${BUILD_DATE}."
             else
-              echo "Desktop release **${TAG}** (\`${SHORT_SHA}\`) — built ${BUILD_DATE}."
+              echo "Alexandria **${TAG}** (\`${SHORT_SHA}\`) — built ${BUILD_DATE}."
             fi
             echo ""
             echo "### Downloads"
@@ -225,8 +367,11 @@ jobs:
             for file in dist-release/*.zip; do
               [[ -e "$file" ]] && echo "| macOS (Apple Silicon) | Archive (.zip) | \`$(basename "$file")\` |"
             done
+            for file in dist-release/*.apk; do
+              [[ -e "$file" ]] && echo "| Android (8.0+) | Signed APK (.apk) | \`$(basename "$file")\` |"
+            done
             echo ""
-            echo "Verify downloads against \`SHA256SUMS.txt\`. On Linux, make the AppImage executable before running: \`chmod +x Alexandria-*.AppImage\`."
+            echo "Verify downloads against \`SHA256SUMS.txt\`. On Linux, make the AppImage executable before running: \`chmod +x Alexandria-*.AppImage\`. On Android, open the \`.apk\` file to install Alexandria offline."
           } > release-notes.md
 
       - name: Move rolling latest tag to current commit
@@ -249,7 +394,6 @@ jobs:
 
           if gh release view "${TAG}" >/dev/null 2>&1; then
             if [[ "${IS_ROLLING}" == "true" ]]; then
-              # Remove stale assets from older versions so the rolling release stays clean
               OLD_ASSETS="$(gh release view "${TAG}" --json assets --jq '.assets[].name')"
               for asset in ${OLD_ASSETS}; do
                 gh release delete-asset "${TAG}" "${asset}" --yes || true
@@ -263,11 +407,13 @@ jobs:
           else
             if [[ "${IS_ROLLING}" == "true" ]]; then
               gh release create "${TAG}" dist-release/* \
+                --target "${GITHUB_SHA}" \
                 --title "${TITLE}" \
                 --notes-file release-notes.md \
                 --latest
             else
               gh release create "${TAG}" dist-release/* \
+                --target "${GITHUB_SHA}" \
                 --title "${TITLE}" \
                 --notes-file release-notes.md \
                 --generate-notes \

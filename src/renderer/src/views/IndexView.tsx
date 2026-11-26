@@ -1,6 +1,6 @@
 import type { LibraryInfo } from '@shared/api'
 import type { Book } from '@shared/types'
-import { useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { BookCover } from '../components/BookCover'
 import { BookDetailsDialog } from '../components/BookDetailsDialog'
 import { navigate } from '../router'
@@ -33,6 +33,12 @@ export function IndexView({ library, books }: Props) {
   })
   const [relinking, setRelinking] = useState<number | null>(null)
   const [detailsId, setDetailsId] = useState<number | null>(null)
+  const [renderLimit, setRenderLimit] = useState(120)
+  const deferredQuery = useDeferredValue(query)
+
+  useEffect(() => {
+    setRenderLimit(120)
+  }, [deferredQuery, tag, stateFilter, sort])
 
   const tags = useMemo(() => {
     const set = new Set<string>()
@@ -41,7 +47,7 @@ export function IndexView({ library, books }: Props) {
   }, [books])
 
   const visible = useMemo(() => {
-    const needle = query.trim().toLowerCase()
+    const needle = deferredQuery.trim().toLowerCase()
     const filtered = books.filter((book) => {
       if (tag && !book.tags.includes(tag)) return false
       if (stateFilter === 'missing' && !book.missing) return false
@@ -78,7 +84,9 @@ export function IndexView({ library, books }: Props) {
       if (typeof left === 'number' && typeof right === 'number') return (left - right) * direction
       return String(left).localeCompare(String(right)) * direction
     })
-  }, [books, query, sort, stateFilter, tag])
+  }, [books, deferredQuery, sort, stateFilter, tag])
+
+  const renderedRows = useMemo(() => visible.slice(0, renderLimit), [visible, renderLimit])
 
   const open = (id: number): void => {
     const book = books.find((entry) => entry.id === id)
@@ -212,7 +220,7 @@ export function IndexView({ library, books }: Props) {
                 </td>
               </tr>
             ) : (
-              visible.map((book) => (
+              renderedRows.map((book) => (
                 <tr
                   key={book.id}
                   className={book.missing ? 'index__row index__row--missing' : 'index__row'}
@@ -235,7 +243,7 @@ export function IndexView({ library, books }: Props) {
                     }
                   }}
                 >
-                  <td>
+                  <td data-label="Volume">
                     <div className="index__book">
                       <BookCover book={book} className="cover--row" />
                       <div className="index__book-copy">
@@ -268,10 +276,10 @@ export function IndexView({ library, books }: Props) {
                       </button>
                     </div>
                   </td>
-                  <td>{book.author ?? '—'}</td>
-                  <td>{book.pageCount ?? '—'}</td>
-                  <td>{book.shelfId === null ? 'Inbox' : `Shelf ${book.shelfId}`}</td>
-                  <td>
+                  <td data-label="Author">{book.author ?? '—'}</td>
+                  <td data-label="Pages">{book.pageCount ?? '—'}</td>
+                  <td data-label="Shelf">{book.shelfId === null ? 'Inbox' : `Shelf ${book.shelfId}`}</td>
+                  <td data-label="Status">
                     <span className={`index__state index__state--${book.readingState}`}>
                       {stateLabels[book.readingState] ?? book.readingState}
                     </span>
@@ -294,6 +302,17 @@ export function IndexView({ library, books }: Props) {
             )}
           </tbody>
         </table>
+        {visible.length > renderLimit ? (
+          <div className="index__more">
+            <button
+              type="button"
+              className="button button--quiet"
+              onClick={() => setRenderLimit((current) => current + 120)}
+            >
+              Show more ({visible.length - renderLimit} remaining)
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <p className="index__footnote">

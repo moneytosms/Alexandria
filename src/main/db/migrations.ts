@@ -139,6 +139,18 @@ ALTER TABLE books ADD COLUMN unlocked_at TEXT;
 ALTER TABLE books ADD COLUMN missing INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE bays ADD COLUMN auto_created INTEGER NOT NULL DEFAULT 0;
 `
+  },
+  {
+    version: 3,
+    name: 'performance-indexes',
+    up: `
+CREATE INDEX IF NOT EXISTS idx_books_reading_state ON books(reading_state, last_opened_at DESC);
+CREATE INDEX IF NOT EXISTS idx_books_desk_pinned ON books(desk_pinned, last_opened_at DESC);
+CREATE INDEX IF NOT EXISTS idx_books_finished ON books(finished_at DESC);
+CREATE INDEX IF NOT EXISTS idx_books_added ON books(added_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_book_tags_tag ON book_tags(tag_id, book_id);
+CREATE INDEX IF NOT EXISTS idx_annotations_updated ON annotations(updated_at DESC, created_at DESC);
+`
   }
 ]
 

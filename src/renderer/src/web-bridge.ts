@@ -2,7 +2,17 @@ import type { AlexandriaApi } from '@shared/api'
 import type { ImportProgress, ImportScanResult } from '@shared/types'
 import { createStaticDemoApi } from './static-demo-bridge'
 
-const isStaticDemo = import.meta.env.VITE_STATIC_DEMO === 'true'
+function isCapacitorNative(): boolean {
+  if (import.meta.env.VITE_ANDROID_APP === 'true') return true
+  if (typeof window === 'undefined') return false
+  const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
+  return Boolean(cap?.isNativePlatform?.())
+}
+
+const isStaticDemo =
+  import.meta.env.VITE_STATIC_DEMO === 'true' ||
+  isCapacitorNative() ||
+  (typeof window !== 'undefined' && /^(\/[^/]+)?\/demo(\/|$)/.test(window.location.pathname))
 
 const stagedFiles = new Map<string, File>()
 let stagedCounter = 0

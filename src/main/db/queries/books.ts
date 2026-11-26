@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { Book, NewBook, ReadingState, StorageMode } from '../../../shared/types'
+import { prepareCached } from '../stmt-cache'
 
 interface RawBook {
   id: number
@@ -31,12 +32,16 @@ interface RawBook {
   tags?: string | null
 }
 
-const bookSelect = `
+/**
+ * Single-pass LEFT JOIN tag aggregation instead of per-row correlated subqueries.
+ * Always pair with GROUP BY b.id.
+ */
+const bookSelectFrom = `
   SELECT b.*,
-    (SELECT group_concat(t.name, char(31))
-       FROM book_tags bt JOIN tags t ON t.id = bt.tag_id
-      WHERE bt.book_id = b.id) AS tags
+    group_concat(t.name, char(31)) AS tags
   FROM books b
+  LEFT JOIN book_tags bt ON bt.book_id = b.id
+  LEFT JOIN tags t ON t.id = bt.tag_id
 `
 
 function toBook(row: RawBook): Book {
@@ -72,35 +77,40 @@ function toBook(row: RawBook): Book {
 }
 
 export function findBookBySha256(db: DatabaseSync, sha256: string): Book | null {
-  const row = db
-    .prepare(`${bookSelect} WHERE b.sha256 = ?`)
-    .get(sha256) as RawBook | undefined
+  const row = prepareCached(db, `${bookSelectFrom} WHERE b.sha256 = ? GROUP BY b.id`).get(
+    sha256
+  ) as RawBook | undefined
   return row ? toBook(row) : null
 }
 
 export function getBook(db: DatabaseSync, id: number): Book | null {
-  const row = db.prepare(`${bookSelect} WHERE b.id = ?`).get(id) as RawBook | undefined
+  const row = prepareCached(db, `${bookSelectFrom} WHERE b.id = ? GROUP BY b.id`).get(id) as
+    | RawBook
+    | undefined
   return row ? toBook(row) : null
 }
 
 export function listBooks(db: DatabaseSync, limit = 5000, offset = 0): Book[] {
-  const rows = db
-    .prepare(`${bookSelect} ORDER BY b.added_at DESC, b.id DESC LIMIT ? OFFSET ?`)
-    .all(limit, offset) as unknown as RawBook[]
+  const rows = prepareCached(
+    db,
+    `${bookSelectFrom} GROUP BY b.id ORDER BY b.added_at DESC, b.id DESC LIMIT ? OFFSET ?`
+  ).all(limit, offset) as unknown as RawBook[]
   return rows.map(toBook)
 }
 
 export function listBooksInShelf(db: DatabaseSync, shelfId: number, limit = 5000): Book[] {
-  const rows = db
-    .prepare(`${bookSelect} WHERE b.shelf_id = ? ORDER BY b.slot_index ASC, b.id ASC LIMIT ?`)
-    .all(shelfId, limit) as unknown as RawBook[]
+  const rows = prepareCached(
+    db,
+    `${bookSelectFrom} WHERE b.shelf_id = ? GROUP BY b.id ORDER BY b.slot_index ASC, b.id ASC LIMIT ?`
+  ).all(shelfId, limit) as unknown as RawBook[]
   return rows.map(toBook)
 }
 
 export function listInboxBooks(db: DatabaseSync): Book[] {
-  const rows = db
-    .prepare(`${bookSelect} WHERE b.shelf_id IS NULL ORDER BY b.added_at DESC`)
-    .all() as unknown as RawBook[]
+  const rows = prepareCached(
+    db,
+    `${bookSelectFrom} WHERE b.shelf_id IS NULL GROUP BY b.id ORDER BY b.added_at DESC`
+  ).all() as unknown as RawBook[]
   return rows.map(toBook)
 }
 
@@ -110,19 +120,19 @@ export function listDeskBooks(db: DatabaseSync): {
   finished: Book[]
 } {
   const pinned = (
-    db
-      .prepare(`${bookSelect} WHERE b.desk_pinned = 1 ORDER BY b.last_opened_at DESC NULLS LAST`)
-      .all() as unknown as RawBook[]
+    prepareCached(
+      db,
+      `${bookSelectFrom} WHERE b.desk_pinned = 1 GROUP BY b.id ORDER BY b.last_opened_at DESC NULLS LAST`
+    ).all() as unknown as RawBook[]
   ).map(toBook)
 
   const pinnedIds = new Set(pinned.map((book) => book.id))
 
   const reading = (
-    db
-      .prepare(
-        `${bookSelect} WHERE b.reading_state = 'reading' ORDER BY b.last_opened_at DESC NULLS LAST LIMIT 10`
-      )
-      .all() as unknown as RawBook[]
+    prepareCached(
+      db,
+      `${bookSelectFrom} WHERE b.reading_state = 'reading' GROUP BY b.id ORDER BY b.last_opened_at DESC NULLS LAST LIMIT 10`
+    ).all() as unknown as RawBook[]
   )
     .map(toBook)
     .filter((book) => !pinnedIds.has(book.id))
@@ -130,14 +140,14 @@ export function listDeskBooks(db: DatabaseSync): {
 
   const takenIds = new Set([...pinnedIds, ...reading.map((book) => book.id)])
   const finished = (
-    db
-      .prepare(
-        `${bookSelect}
-         WHERE b.finished_at IS NOT NULL
-           AND b.finished_at >= datetime('now', '-30 days')
-         ORDER BY b.finished_at DESC LIMIT 10`
-      )
-      .all() as unknown as RawBook[]
+    prepareCached(
+      db,
+      `${bookSelectFrom}
+       WHERE b.finished_at IS NOT NULL
+         AND b.finished_at >= datetime('now', '-30 days')
+       GROUP BY b.id
+       ORDER BY b.finished_at DESC LIMIT 10`
+    ).all() as unknown as RawBook[]
   )
     .map(toBook)
     .filter((book) => !takenIds.has(book.id))
@@ -147,7 +157,7 @@ export function listDeskBooks(db: DatabaseSync): {
 }
 
 export function countBooks(db: DatabaseSync): number {
-  const row = db.prepare('SELECT COUNT(*) AS n FROM books').get() as { n: number }
+  const row = prepareCached(db, 'SELECT COUNT(*) AS n FROM books').get() as { n: number }
   return Number(row.n)
 }
 
@@ -157,39 +167,37 @@ export function insertBook(db: DatabaseSync, book: NewBook): Book {
       ? 0
       : Number(
           (
-            db
-              .prepare(
-                'SELECT COALESCE(MAX(slot_index), -1) + 1 AS next FROM books WHERE shelf_id = ?'
-              )
-              .get(book.shelfId) as { next: number }
+            prepareCached(
+              db,
+              'SELECT COALESCE(MAX(slot_index), -1) + 1 AS next FROM books WHERE shelf_id = ?'
+            ).get(book.shelfId) as { next: number }
           ).next
         )
 
-  const row = db
-    .prepare(
-      `INSERT INTO books
-        (title, author, format, original_format, file_path, rel_path, storage_mode,
-         sha256, file_size, page_count, cover_path, encrypted, shelf_id, slot_index, metadata_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       RETURNING *`
-    )
-    .get(
-      book.title,
-      book.author ?? null,
-      book.format ?? 'pdf',
-      book.originalFormat ?? null,
-      book.filePath,
-      book.relPath ?? null,
-      book.storageMode,
-      book.sha256,
-      book.fileSize ?? null,
-      book.pageCount ?? null,
-      book.coverPath ?? null,
-      book.encrypted ? 1 : 0,
-      book.shelfId ?? null,
-      slotIndex,
-      book.metadataJson ?? null
-    ) as unknown as RawBook
+  const row = prepareCached(
+    db,
+    `INSERT INTO books
+      (title, author, format, original_format, file_path, rel_path, storage_mode,
+       sha256, file_size, page_count, cover_path, encrypted, shelf_id, slot_index, metadata_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     RETURNING *`
+  ).get(
+    book.title,
+    book.author ?? null,
+    book.format ?? 'pdf',
+    book.originalFormat ?? null,
+    book.filePath,
+    book.relPath ?? null,
+    book.storageMode,
+    book.sha256,
+    book.fileSize ?? null,
+    book.pageCount ?? null,
+    book.coverPath ?? null,
+    book.encrypted ? 1 : 0,
+    book.shelfId ?? null,
+    slotIndex,
+    book.metadataJson ?? null
+  ) as unknown as RawBook
 
   return toBook(row)
 }
@@ -200,7 +208,8 @@ export function updateReadingProgress(
   page: number,
   scroll: number
 ): void {
-  db.prepare(
+  prepareCached(
+    db,
     `UPDATE books
      SET last_page = ?, last_scroll = ?, last_opened_at = datetime('now'),
          reading_state = CASE WHEN reading_state = 'finished' THEN 'finished' ELSE 'reading' END
@@ -209,18 +218,20 @@ export function updateReadingProgress(
 }
 
 export function touchBookOpened(db: DatabaseSync, id: number): void {
-  db.prepare("UPDATE books SET last_opened_at = datetime('now') WHERE id = ?").run(id)
+  prepareCached(db, "UPDATE books SET last_opened_at = datetime('now') WHERE id = ?").run(id)
 }
 
 export function markBookFinished(db: DatabaseSync, id: number, finished: boolean): void {
   if (finished) {
-    db.prepare(
+    prepareCached(
+      db,
       `UPDATE books
        SET reading_state = 'finished', finished_at = COALESCE(finished_at, datetime('now'))
        WHERE id = ?`
     ).run(id)
   } else {
-    db.prepare(
+    prepareCached(
+      db,
       `UPDATE books
        SET reading_state = 'reading', finished_at = NULL
        WHERE id = ?`
@@ -230,12 +241,13 @@ export function markBookFinished(db: DatabaseSync, id: number, finished: boolean
 
 export function moveBookToShelf(db: DatabaseSync, id: number, shelfId: number): Book {
   const slot = (
-    db
-      .prepare('SELECT COALESCE(MAX(slot_index), -1) + 1 AS next FROM books WHERE shelf_id = ?')
-      .get(shelfId) as { next: number }
+    prepareCached(
+      db,
+      'SELECT COALESCE(MAX(slot_index), -1) + 1 AS next FROM books WHERE shelf_id = ?'
+    ).get(shelfId) as { next: number }
   ).next
 
-  db.prepare('UPDATE books SET shelf_id = ?, slot_index = ? WHERE id = ?').run(
+  prepareCached(db, 'UPDATE books SET shelf_id = ?, slot_index = ? WHERE id = ?').run(
     shelfId,
     Number(slot),
     id
@@ -247,15 +259,26 @@ export function moveBookToShelf(db: DatabaseSync, id: number, shelfId: number): 
 }
 
 export function unshelveBook(db: DatabaseSync, id: number): Book {
-  db.prepare('UPDATE books SET shelf_id = NULL, slot_index = 0 WHERE id = ?').run(id)
+  prepareCached(db, 'UPDATE books SET shelf_id = NULL, slot_index = 0 WHERE id = ?').run(id)
   const book = getBook(db, id)
   if (!book) throw new Error(`Book ${id} not found`)
   return book
 }
 
 export function reorderShelf(db: DatabaseSync, shelfId: number, orderedIds: number[]): void {
-  const update = db.prepare('UPDATE books SET slot_index = ? WHERE id = ? AND shelf_id = ?')
-  orderedIds.forEach((id, index) => update.run(index, id, shelfId))
+  if (orderedIds.length === 0) return
+  const update = prepareCached(
+    db,
+    'UPDATE books SET slot_index = ? WHERE id = ? AND shelf_id = ?'
+  )
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    orderedIds.forEach((id, index) => update.run(index, id, shelfId))
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
 }
 
 export interface BookIndexPatch {
@@ -333,21 +356,23 @@ export function updateBookMetadata(
 }
 
 export function setBookPinned(db: DatabaseSync, id: number, pinned: boolean): Book {
-  db.prepare('UPDATE books SET desk_pinned = ? WHERE id = ?').run(pinned ? 1 : 0, id)
+  prepareCached(db, 'UPDATE books SET desk_pinned = ? WHERE id = ?').run(pinned ? 1 : 0, id)
   const book = getBook(db, id)
   if (!book) throw new Error(`Book ${id} not found`)
   return book
 }
 
 export function removeBook(db: DatabaseSync, id: number): void {
-  db.prepare('DELETE FROM books WHERE id = ?').run(id)
+  prepareCached(db, 'DELETE FROM books WHERE id = ?').run(id)
 }
 
 export function listBooksForShelfIds(db: DatabaseSync, shelfIds: number[]): Book[] {
   if (shelfIds.length === 0) return []
   const placeholders = shelfIds.map(() => '?').join(', ')
   const rows = db
-    .prepare(`${bookSelect} WHERE b.shelf_id IN (${placeholders}) ORDER BY b.slot_index ASC`)
+    .prepare(
+      `${bookSelectFrom} WHERE b.shelf_id IN (${placeholders}) GROUP BY b.id ORDER BY b.slot_index ASC`
+    )
     .all(...shelfIds) as unknown as RawBook[]
   return rows.map(toBook)
 }

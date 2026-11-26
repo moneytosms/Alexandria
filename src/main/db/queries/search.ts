@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { SearchHit, SearchResponse } from '../../../shared/types'
+import { prepareCached } from '../stmt-cache'
 
 const MAX_HITS = 60
 
@@ -27,18 +28,17 @@ export function searchInBook(
   const fts = toFtsQuery(query)
   if (!fts) return []
 
-  const rows = db
-    .prepare(
-      `SELECT p.book_id, p.page,
-              snippet(pages_fts, 0, '', '', ' … ', 24) AS snippet
-       FROM pages_fts p
-       WHERE pages_fts MATCH ? AND p.book_id = ?
-       ORDER BY p.page ASC
-       LIMIT ?`
-    )
-    .all(fts, bookId, limit) as Array<{ book_id: number; page: number; snippet: string }>
+  const rows = prepareCached(
+    db,
+    `SELECT p.book_id, p.page,
+            snippet(pages_fts, 0, '', '', ' … ', 24) AS snippet
+     FROM pages_fts p
+     WHERE pages_fts MATCH ? AND p.book_id = ?
+     ORDER BY p.page ASC
+     LIMIT ?`
+  ).all(fts, bookId, limit) as Array<{ book_id: number; page: number; snippet: string }>
 
-  const book = db.prepare('SELECT title, author FROM books WHERE id = ?').get(bookId) as
+  const book = prepareCached(db, 'SELECT title, author FROM books WHERE id = ?').get(bookId) as
     | { title: string; author: string | null }
     | undefined
 
@@ -71,18 +71,17 @@ export function globalSearch(db: DatabaseSync, query: string): SearchResponse {
     hits.push(hit)
   }
 
-  const titleRows = db
-    .prepare(
-      `SELECT b.id, b.title, b.author, b.last_page
-       FROM books b
-       WHERE b.title LIKE ? ESCAPE '\\' OR COALESCE(b.author, '') LIKE ? ESCAPE '\\'
-          OR b.file_path LIKE ? ESCAPE '\\' OR b.original_format LIKE ? ESCAPE '\\'
-       ORDER BY
-         CASE WHEN b.title LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END,
-         b.title COLLATE NOCASE
-       LIMIT 20`
-    )
-    .all(like, like, like, like, like) as Array<{
+  const titleRows = prepareCached(
+    db,
+    `SELECT b.id, b.title, b.author, b.last_page
+     FROM books b
+     WHERE b.title LIKE ? ESCAPE '\\' OR COALESCE(b.author, '') LIKE ? ESCAPE '\\'
+        OR b.file_path LIKE ? ESCAPE '\\' OR b.original_format LIKE ? ESCAPE '\\'
+     ORDER BY
+       CASE WHEN b.title LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END,
+       b.title COLLATE NOCASE
+     LIMIT 20`
+  ).all(like, like, like, like, like) as Array<{
     id: number
     title: string
     author: string | null
@@ -102,17 +101,16 @@ export function globalSearch(db: DatabaseSync, query: string): SearchResponse {
 
   const fts = toFtsQuery(trimmed)
   if (fts) {
-    const textRows = db
-      .prepare(
-        `SELECT p.book_id, p.page, b.title, b.author,
-                snippet(pages_fts, 0, '', '', ' … ', 24) AS snippet
-         FROM pages_fts p
-         JOIN books b ON b.id = p.book_id
-         WHERE pages_fts MATCH ?
-         ORDER BY bm25(pages_fts)
-         LIMIT 40`
-      )
-      .all(fts) as Array<{
+    const textRows = prepareCached(
+      db,
+      `SELECT p.book_id, p.page, b.title, b.author,
+              snippet(pages_fts, 0, '', '', ' … ', 24) AS snippet
+       FROM pages_fts p
+       JOIN books b ON b.id = p.book_id
+       WHERE pages_fts MATCH ?
+       ORDER BY bm25(pages_fts)
+       LIMIT 40`
+    ).all(fts) as Array<{
       book_id: number
       page: number
       title: string
@@ -132,16 +130,15 @@ export function globalSearch(db: DatabaseSync, query: string): SearchResponse {
     }
   }
 
-  const noteRows = db
-    .prepare(
-      `SELECT a.book_id, a.page, b.title, b.author, COALESCE(a.note, '') AS note
-       FROM annotations a
-       JOIN books b ON b.id = a.book_id
-       WHERE a.note LIKE ? ESCAPE '\\'
-       ORDER BY a.updated_at DESC, a.created_at DESC
-       LIMIT 20`
-    )
-    .all(like) as Array<{
+  const noteRows = prepareCached(
+    db,
+    `SELECT a.book_id, a.page, b.title, b.author, COALESCE(a.note, '') AS note
+     FROM annotations a
+     JOIN books b ON b.id = a.book_id
+     WHERE a.note LIKE ? ESCAPE '\\'
+     ORDER BY a.updated_at DESC, a.created_at DESC
+     LIMIT 20`
+  ).all(like) as Array<{
     book_id: number
     page: number
     title: string

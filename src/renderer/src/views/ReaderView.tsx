@@ -19,9 +19,11 @@ import {
   spreadStart,
   stepMatch
 } from '../reader/layout'
+import { pageCacheKey, PdfPageLruCache, simplifyInkStroke } from '../reader/page-cache'
 import { navigate } from '../router'
 import { playSound, useAmbientStore } from '../sound'
 import { recallLastBook, useReaderStore } from '../state/reader-store'
+import { useScholarStore } from '../state/scholar-store'
 import {
   formatClock,
   modeDurationSeconds,
@@ -30,7 +32,8 @@ import {
 } from '../state/study-store'
 import { useUiStore } from '../state/ui-store'
 
-pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
+pdfjs.GlobalWorkerOptions.workerSrc =
+  typeof window !== 'undefined' ? new URL(workerUrl, window.location.href).href : workerUrl
 
 const highlightColors = ['#e3c26b', '#d98d6a', '#8fb3a0', '#9aa9cf', '#c78fa6']
 
@@ -63,6 +66,7 @@ function readSettings(book: Book | null): ReaderSettings {
 
 interface PageProps {
   pdf: PDFDocumentProxy
+  pageCache: PdfPageLruCache
   number: number
   containerWidth: number
   fit: 'width' | 'page' | 'custom'
@@ -81,6 +85,7 @@ interface PageProps {
 
 function PdfPage({
   pdf,
+  pageCache,
   number,
   containerWidth,
   containerHeight,
@@ -99,6 +104,9 @@ function PdfPage({
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const textRef = useRef<HTMLDivElement | null>(null)
+  const draftPathRef = useRef<SVGPathElement | null>(null)
+  const draftPointsRef = useRef<InkPoint[] | null>(null)
+  const activePenPointerRef = useRef<number | null>(null)
   const highlightAnchorRef = useRef<{
     x: number
     y: number
@@ -112,7 +120,7 @@ function PdfPage({
   } | null>(null)
   const [scale, setScale] = useState(1)
   const [pageSize, setPageSize] = useState<{ width: number; height: number } | null>(null)
-  const [draftStroke, setDraftStroke] = useState<InkPoint[] | null>(null)
+  const [textVersion, setTextVersion] = useState(0)
   const [draftHighlight, setDraftHighlight] = useState<NormalizedRect | null>(null)
   const [menu, setMenu] = useState<{
     left: number
@@ -121,22 +129,33 @@ function PdfPage({
     rects: NormalizedRect[]
   } | null>(null)
 
+  const clearDraftStroke = useCallback((): void => {
+    draftPointsRef.current = null
+    inkStartRef.current = null
+    activePenPointerRef.current = null
+    if (draftPathRef.current) {
+      draftPathRef.current.setAttribute('d', '')
+    }
+  }, [])
+
   useEffect(() => {
     window.getSelection()?.removeAllRanges()
     setMenu(null)
-    setDraftStroke(null)
+    clearDraftStroke()
     setDraftHighlight(null)
     highlightAnchorRef.current = null
-    inkStartRef.current = null
-  }, [tool, number])
+  }, [tool, number, clearDraftStroke])
 
+  // Full PDF page rasterization + TextLayer build (intentionally decoupled from searchQuery!)
   useEffect(() => {
     let cancelled = false
     let textLayer: pdfjs.TextLayer | null = null
     let renderTask: ReturnType<PDFPageProxy['render']> | null = null
+    let loadedPage: PDFPageProxy | null = null
 
     const render = async (): Promise<void> => {
       const page: PDFPageProxy = await pdf.getPage(number)
+      loadedPage = page
       if (cancelled) return
 
       const base = page.getViewport({ scale: 1, rotation })
@@ -163,20 +182,34 @@ function PdfPage({
       const dpr = Math.min(window.devicePixelRatio || 1, 2)
       const pixelWidth = Math.max(1, Math.round(cssWidth * dpr))
       const pixelHeight = Math.max(1, Math.round(cssHeight * dpr))
+      const cacheKey = pageCacheKey(number, cssWidth, cssHeight, rotation, dpr)
 
-      // Render into an offscreen buffer first, then blit atomically to prevent blank flashes
-      const offscreen = document.createElement('canvas')
-      offscreen.width = pixelWidth
-      offscreen.height = pixelHeight
-      const offCtx = offscreen.getContext('2d')
-      if (!offCtx) return
-      offCtx.setTransform(pixelWidth / viewport.width, 0, 0, pixelHeight / viewport.height, 0, 0)
-      offCtx.fillStyle = '#ffffff'
-      offCtx.fillRect(0, 0, viewport.width, viewport.height)
+      let sourceCanvas = pageCache.get(cacheKey)?.canvas ?? null
+      if (!sourceCanvas) {
+        // Render into an offscreen buffer first, then cache & blit atomically to prevent blank flashes
+        const offscreen = document.createElement('canvas')
+        offscreen.width = pixelWidth
+        offscreen.height = pixelHeight
+        const offCtx = offscreen.getContext('2d')
+        if (!offCtx) return
+        offCtx.setTransform(pixelWidth / viewport.width, 0, 0, pixelHeight / viewport.height, 0, 0)
+        offCtx.fillStyle = '#ffffff'
+        offCtx.fillRect(0, 0, viewport.width, viewport.height)
 
-      renderTask = page.render({ canvasContext: offCtx, viewport, canvas: offscreen })
-      await renderTask.promise
-      if (cancelled) return
+        renderTask = page.render({ canvasContext: offCtx, viewport, canvas: offscreen })
+        await renderTask.promise
+        if (cancelled) return
+
+        pageCache.set(cacheKey, {
+          canvas: offscreen,
+          cssWidth,
+          cssHeight,
+          pixelWidth,
+          pixelHeight,
+          scale: nextScale
+        })
+        sourceCanvas = offscreen
+      }
 
       const canvas = canvasRef.current
       if (!canvas) return
@@ -189,7 +222,7 @@ function PdfPage({
       const displayCtx = canvas.getContext('2d')
       if (displayCtx) {
         displayCtx.setTransform(1, 0, 0, 1, 0, 0)
-        displayCtx.drawImage(offscreen, 0, 0)
+        displayCtx.drawImage(sourceCanvas, 0, 0)
       }
 
       const textContainer = textRef.current
@@ -208,15 +241,7 @@ function PdfPage({
         })
         await textLayer.render()
         if (cancelled) return
-
-        const needle = searchQuery.trim().toLowerCase()
-        if (needle.length > 1) {
-          for (const span of Array.from(textContainer.querySelectorAll('span'))) {
-            if (span.textContent?.toLowerCase().includes(needle)) {
-              span.classList.add('textLayer__match')
-            }
-          }
-        }
+        setTextVersion((v) => v + 1)
       }
     }
 
@@ -226,8 +251,26 @@ function PdfPage({
       cancelled = true
       renderTask?.cancel()
       textLayer?.cancel()
+      try {
+        loadedPage?.cleanup()
+      } catch {
+        // Ignore cleanup errors on destroyed documents
+      }
     }
-  }, [pdf, number, containerWidth, containerHeight, fit, zoom, rotation, searchQuery])
+  }, [pdf, pageCache, number, containerWidth, containerHeight, fit, zoom, rotation])
+
+  // Lightweight search highlight pass — toggles CSS classes on existing TextLayer spans with zero canvas redraw
+  useEffect(() => {
+    const textContainer = textRef.current
+    if (!textContainer) return
+    const needle = searchQuery.trim().toLowerCase()
+    const spans = textContainer.querySelectorAll('span')
+    for (let i = 0; i < spans.length; i += 1) {
+      const span = spans[i]
+      const matches = needle.length > 1 && (span.textContent?.toLowerCase().includes(needle) ?? false)
+      span.classList.toggle('textLayer__match', matches)
+    }
+  }, [searchQuery, textVersion])
 
   const selectionRects = useCallback((): NormalizedRect[] => {
     const canvas = canvasRef.current
@@ -391,48 +434,71 @@ function PdfPage({
   }
 
   const startStroke = (event: ReactPointerEvent<SVGSVGElement>): void => {
-    if (tool !== 'ink' || event.button !== 0) return
+    const isStylus = event.pointerType === 'pen'
+    if (tool !== 'ink' && !isStylus) return
+    if (event.button !== 0 && !isStylus) return
+    // Palm rejection: ignore stray finger touches while a stylus stroke is active
+    if (activePenPointerRef.current !== null && event.pointerId !== activePenPointerRef.current) {
+      return
+    }
     event.preventDefault()
     window.getSelection()?.removeAllRanges()
     setMenu(null)
     const point = inkPoint(event)
     if (!point) return
+    if (isStylus) activePenPointerRef.current = event.pointerId
     event.currentTarget.setPointerCapture(event.pointerId)
     inkStartRef.current = {
       lastClientX: event.clientX,
       lastClientY: event.clientY,
       totalDist: 0
     }
-    setDraftStroke([point])
+    draftPointsRef.current = [point]
+    if (draftPathRef.current) {
+      draftPathRef.current.setAttribute('d', inkPath(draftPointsRef.current))
+    }
   }
 
   const moveStroke = (event: ReactPointerEvent<SVGSVGElement>): void => {
-    if (tool !== 'ink' || !draftStroke || !inkStartRef.current) return
-    event.preventDefault()
-    const dx = event.clientX - inkStartRef.current.lastClientX
-    const dy = event.clientY - inkStartRef.current.lastClientY
-    const seg = Math.hypot(dx, dy)
-    if (seg < 1.5) return
-    inkStartRef.current.lastClientX = event.clientX
-    inkStartRef.current.lastClientY = event.clientY
-    inkStartRef.current.totalDist += seg
-    const point = inkPoint(event)
-    if (!point) return
-    setDraftStroke((current) => (current ? [...current, point] : current))
-  }
-
-  const endStroke = (): void => {
+    const points = draftPointsRef.current
     const metrics = inkStartRef.current
-    inkStartRef.current = null
-    if (tool !== 'ink' || !draftStroke) {
-      setDraftStroke(null)
+    if (!points || !metrics) return
+    if (activePenPointerRef.current !== null && event.pointerId !== activePenPointerRef.current) {
       return
     }
-    const stroke = draftStroke
-    setDraftStroke(null)
+    event.preventDefault()
+    const dx = event.clientX - metrics.lastClientX
+    const dy = event.clientY - metrics.lastClientY
+    const seg = Math.hypot(dx, dy)
+    if (seg < 1.5) return
+    metrics.lastClientX = event.clientX
+    metrics.lastClientY = event.clientY
+    metrics.totalDist += seg
+    const point = inkPoint(event)
+    if (!point) return
+    points.push(point)
+    // Imperative DOM update: silky 120Hz ink with zero React re-renders during stroke
+    if (draftPathRef.current) {
+      draftPathRef.current.setAttribute('d', inkPath(points))
+    }
+  }
+
+  const endStroke = (event?: ReactPointerEvent<SVGSVGElement>): void => {
+    if (
+      event &&
+      activePenPointerRef.current !== null &&
+      event.pointerId !== activePenPointerRef.current
+    ) {
+      return
+    }
+    const metrics = inkStartRef.current
+    const stroke = draftPointsRef.current
+    clearDraftStroke()
+    if (!stroke) return
     // Require genuine drag (>= 4px and >= 2 points) so single clicks never leave stray dots
     if (stroke.length >= 2 && (metrics?.totalDist ?? 0) >= 4) {
-      onInk(number, stroke)
+      const simplified = simplifyInkStroke(stroke)
+      onInk(number, simplified)
     }
   }
 
@@ -514,7 +580,6 @@ function PdfPage({
       ) : null}
 
       {annotations.some((annotation) => annotation.type === 'ink') ||
-      draftStroke ||
       tool === 'ink' ||
       tool === 'erase' ? (
         <svg
@@ -553,17 +618,16 @@ function PdfPage({
                 />
               ))
             )}
-          {draftStroke ? (
-            <path
-              d={inkPath(draftStroke)}
-              fill="none"
-              stroke={color}
-              strokeWidth={2.5}
-              vectorEffect="non-scaling-stroke"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          ) : null}
+          <path
+            ref={draftPathRef}
+            d=""
+            fill="none"
+            stroke={color}
+            strokeWidth={2.5}
+            vectorEffect="non-scaling-stroke"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
       ) : null}
 
@@ -770,6 +834,8 @@ export function ReaderView() {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const programmaticScroll = useRef(false)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const pageCacheRef = useRef<PdfPageLruCache>(new PdfPageLruCache(10))
+  const keydownRef = useRef<(event: KeyboardEvent) => void>(() => undefined)
 
   const setSidebar = (open: boolean): void => {
     setSidebarOpen(open)
@@ -810,7 +876,8 @@ export function ReaderView() {
         setPinned(loaded.deskPinned)
         const nextSettings = readSettings(loaded)
         setSettings(nextSettings)
-        setSidebarOpen(nextSettings.sidebar)
+        const isNarrowViewport = typeof window !== 'undefined' && window.innerWidth < 768
+        setSidebarOpen(isNarrowViewport ? false : nextSettings.sidebar)
 
         if (loaded.encrypted && !loaded.unlockedAt) {
           setNeedsUnlock(true)
@@ -821,8 +888,13 @@ export function ReaderView() {
         const data = await window.alexandria.bookData(storeBookId)
         if (cancelled) return
 
+        const copy = new Uint8Array(data).slice()
+        if (copy.byteLength < 8) {
+          throw new Error('This PDF file is empty or corrupted.')
+        }
+
         task = pdfjs.getDocument({
-          data: new Uint8Array(data),
+          data: copy,
           useSystemFonts: true
         })
         doc = await task.promise
@@ -894,6 +966,7 @@ export function ReaderView() {
 
     return () => {
       cancelled = true
+      pageCacheRef.current.clear()
       void task?.destroy()
     }
     // The requested page is read on load only; page turns must not reload the document.
@@ -903,17 +976,145 @@ export function ReaderView() {
     if (book) document.title = `${book.title} · Alexandria`
   }, [book])
 
+  // Debounced ResizeObserver so window/sidebar dragging never thrashes full PDF re-rasterization
   useEffect(() => {
     const element = viewportRef.current
     if (!element) return
 
+    let timer: number | null = null
+    let measuredOnce = false
+
+    const applyRect = (width: number, height: number): void => {
+      const nextW = Math.round(width)
+      const nextH = Math.round(height)
+      setContainerSize((prev) =>
+        Math.abs(prev.width - nextW) <= 1 && Math.abs(prev.height - nextH) <= 1
+          ? prev
+          : { width: nextW, height: nextH }
+      )
+    }
+
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect
-      if (rect) setContainerSize({ width: rect.width, height: rect.height })
+      if (!rect) return
+      if (!measuredOnce) {
+        measuredOnce = true
+        applyRect(rect.width, rect.height)
+        return
+      }
+      if (timer !== null) window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        timer = null
+        applyRect(rect.width, rect.height)
+      }, 95)
     })
     observer.observe(element)
-    return () => observer.disconnect()
+    return () => {
+      if (timer !== null) window.clearTimeout(timer)
+      observer.disconnect()
+    }
   }, [pdf])
+
+  // Idle adjacent-page pre-renderer (N+1 and N-1) for 0ms instant page turns
+  useEffect(() => {
+    if (!pdf || pageCount <= 1 || settings.mode !== 'page') return
+    let cancelled = false
+    const candidates = [page + 1, page - 1].filter((n) => n >= 1 && n <= pageCount)
+    if (candidates.length === 0) return
+
+    const targetWidth =
+      settings.spread && containerSize.width >= 760
+        ? containerSize.width / 2
+        : containerSize.width
+
+    const prewarm = async (): Promise<void> => {
+      for (const targetNum of candidates) {
+        if (cancelled) return
+        let loaded: PDFPageProxy | null = null
+        try {
+          loaded = await pdf.getPage(targetNum)
+          if (cancelled) return
+          const base = loaded.getViewport({ scale: 1, rotation: settings.rotation })
+          const width = Math.max(280, targetWidth - 48)
+          let nextScale = settings.zoom
+          if (settings.fit === 'width') nextScale = (width - 2) / base.width
+          else if (settings.fit === 'page') {
+            const height = Math.max(320, containerSize.height - 48)
+            nextScale = Math.min((width - 2) / base.width, (height - 2) / base.height)
+          }
+          nextScale = Math.max(0.1, Math.min(6, nextScale))
+          const viewport = loaded.getViewport({ scale: nextScale, rotation: settings.rotation })
+          const cssWidth = Math.max(1, Math.round(viewport.width))
+          const cssHeight = Math.max(1, Math.round(viewport.height))
+          const dpr = Math.min(window.devicePixelRatio || 1, 2)
+          const cacheKey = pageCacheKey(targetNum, cssWidth, cssHeight, settings.rotation, dpr)
+          if (pageCacheRef.current.has(cacheKey)) {
+            loaded.cleanup()
+            continue
+          }
+
+          const offscreen = document.createElement('canvas')
+          offscreen.width = Math.max(1, Math.round(cssWidth * dpr))
+          offscreen.height = Math.max(1, Math.round(cssHeight * dpr))
+          const ctx = offscreen.getContext('2d')
+          if (!ctx) continue
+          ctx.setTransform(offscreen.width / viewport.width, 0, 0, offscreen.height / viewport.height, 0, 0)
+          ctx.fillStyle = '#ffffff'
+          ctx.fillRect(0, 0, viewport.width, viewport.height)
+
+          await loaded.render({ canvasContext: ctx, viewport, canvas: offscreen }).promise
+          if (cancelled) {
+            offscreen.width = 0
+            offscreen.height = 0
+            return
+          }
+          pageCacheRef.current.set(cacheKey, {
+            canvas: offscreen,
+            cssWidth,
+            cssHeight,
+            pixelWidth: offscreen.width,
+            pixelHeight: offscreen.height,
+            scale: nextScale
+          })
+          loaded.cleanup()
+        } catch {
+          try {
+            loaded?.cleanup()
+          } catch {
+            // Ignore cleanup failure
+          }
+        }
+      }
+    }
+
+    const win = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+      cancelIdleCallback?: (id: number) => void
+    }
+    if (typeof win.requestIdleCallback === 'function') {
+      const id = win.requestIdleCallback(() => void prewarm(), { timeout: 650 })
+      return () => {
+        cancelled = true
+        win.cancelIdleCallback?.(id)
+      }
+    }
+    const timer = window.setTimeout(() => void prewarm(), 220)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [
+    pdf,
+    page,
+    pageCount,
+    settings.mode,
+    settings.spread,
+    settings.fit,
+    settings.zoom,
+    settings.rotation,
+    containerSize.width,
+    containerSize.height
+  ])
 
   useEffect(() => {
     if (!book) return
@@ -944,6 +1145,9 @@ export function ReaderView() {
   const goToPage = useCallback(
     (target: number, smooth = false): void => {
       const clamped = Math.min(Math.max(1, Math.round(target)), pageCount || 1)
+      if (clamped !== page) {
+        useScholarStore.getState().recordPageTurn()
+      }
       setPage(clamped)
       storePage(clamped)
 
@@ -1013,6 +1217,7 @@ export function ReaderView() {
       color: highlight,
       rects
     })
+    useScholarStore.getState().recordAnnotation()
     await refreshAnnotations()
   }
 
@@ -1025,6 +1230,7 @@ export function ReaderView() {
       color,
       strokes: [stroke]
     })
+    useScholarStore.getState().recordAnnotation()
     await refreshAnnotations()
   }
 
@@ -1035,13 +1241,15 @@ export function ReaderView() {
     )
 
     if (existing) await window.alexandria.deleteAnnotation(existing.id)
-    else
+    else {
       await window.alexandria.createAnnotation({
         bookId: book.id,
         page,
         type: 'bookmark',
         color: null
       })
+      useScholarStore.getState().recordAnnotation()
+    }
 
     await refreshAnnotations()
   }
@@ -1061,6 +1269,7 @@ export function ReaderView() {
         color,
         note: noteDraft.text.trim()
       })
+      useScholarStore.getState().recordAnnotation()
     }
 
     setNoteDraft(null)
@@ -1188,113 +1397,182 @@ export function ReaderView() {
     else await document.documentElement.requestFullscreen()
   }
 
+  // Ref-backed keyboard handler: attaches window listener ONCE on mount (zero re-attach churn!)
+  keydownRef.current = (event: KeyboardEvent): void => {
+    const target = event.target as HTMLElement | null
+    if (
+      target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable)
+    ) {
+      return
+    }
+
+    const command = event.ctrlKey || event.metaKey
+    if (command && event.key.toLowerCase() === 'f') {
+      event.preventDefault()
+      setTab('search')
+      setSidebar(true)
+      requestAnimationFrame(() => searchInputRef.current?.focus())
+      return
+    }
+    if (command && event.key.toLowerCase() === 'z') {
+      event.preventDefault()
+      if (event.shiftKey) void redoInkStroke()
+      else void undoInk()
+      return
+    }
+    if (event.key === '?') {
+      event.preventDefault()
+      setShortcutsOpen((current) => !current)
+      return
+    }
+
+    switch (event.key) {
+      case 'ArrowRight':
+      case 'PageDown':
+        event.preventDefault()
+        nextPage()
+        break
+      case 'ArrowLeft':
+      case 'PageUp':
+        event.preventDefault()
+        previousPage()
+        break
+      case ' ':
+        event.preventDefault()
+        nextPage()
+        break
+      case 'Home':
+        event.preventDefault()
+        goToPage(1)
+        break
+      case 'End':
+        event.preventDefault()
+        goToPage(pageCount)
+        break
+      case '+':
+      case '=':
+        setSettings((current) => ({ ...current, fit: 'custom', zoom: Math.min(5, current.zoom * 1.15) }))
+        break
+      case '-':
+        setSettings((current) => ({ ...current, fit: 'custom', zoom: Math.max(0.4, current.zoom / 1.15) }))
+        break
+      case 'f':
+        void toggleFullscreen()
+        break
+      case 'b':
+        void toggleBookmark()
+        break
+      case 'h':
+        setTool('highlight')
+        break
+      case 'i':
+        setTool('ink')
+        break
+      case 'e':
+        setTool('erase')
+        break
+      case 's':
+        setSettings((current) => ({ ...current, mode: 'page', spread: !current.spread }))
+        break
+      case 'd':
+        event.preventDefault()
+        setStudyMode(!studyMode)
+        break
+      case 'Escape':
+        if (studyMode) {
+          setStudyMode(false)
+          break
+        }
+        if (tool !== 'select') {
+          setTool('select')
+          window.getSelection()?.removeAllRanges()
+          break
+        }
+        setSidebar(false)
+        setNoteDraft(null)
+        setShortcutsOpen(false)
+        break
+      default:
+        break
+    }
+  }
+
   useEffect(() => {
-    const handler = (event: KeyboardEvent): void => {
-      const target = event.target as HTMLElement | null
-      if (
-        target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.tagName === 'SELECT' ||
-          target.isContentEditable)
-      ) {
-        return
-      }
+    const listener = (event: KeyboardEvent): void => keydownRef.current(event)
+    window.addEventListener('keydown', listener)
+    return () => window.removeEventListener('keydown', listener)
+  }, [])
 
-      const command = event.ctrlKey || event.metaKey
-      if (command && event.key.toLowerCase() === 'f') {
-        event.preventDefault()
-        setTab('search')
-        setSidebar(true)
-        requestAnimationFrame(() => searchInputRef.current?.focus())
-        return
-      }
-      if (command && event.key.toLowerCase() === 'z') {
-        event.preventDefault()
-        if (event.shiftKey) void redoInkStroke()
-        else void undoInk()
-        return
-      }
-      if (event.key === '?') {
-        event.preventDefault()
-        setShortcutsOpen((current) => !current)
-        return
-      }
+  // Touch ergonomics: two-finger pinch-to-zoom & single-finger horizontal swipe page turns
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
 
-      switch (event.key) {
-        case 'ArrowRight':
-        case 'PageDown':
-          event.preventDefault()
-          nextPage()
-          break
-        case 'ArrowLeft':
-        case 'PageUp':
-          event.preventDefault()
-          previousPage()
-          break
-        case ' ':
-          event.preventDefault()
-          nextPage()
-          break
-        case 'Home':
-          event.preventDefault()
-          goToPage(1)
-          break
-        case 'End':
-          event.preventDefault()
-          goToPage(pageCount)
-          break
-        case '+':
-        case '=':
-          setSettings((current) => ({ ...current, fit: 'custom', zoom: current.zoom * 1.15 }))
-          break
-        case '-':
-          setSettings((current) => ({ ...current, fit: 'custom', zoom: current.zoom / 1.15 }))
-          break
-        case 'f':
-          void toggleFullscreen()
-          break
-        case 'b':
-          void toggleBookmark()
-          break
-        case 'h':
-          setTool('highlight')
-          break
-        case 'i':
-          setTool('ink')
-          break
-        case 'e':
-          setTool('erase')
-          break
-        case 's':
-          setSettings((current) => ({ ...current, mode: 'page', spread: !current.spread }))
-          break
-        case 'd':
-          event.preventDefault()
-          setStudyMode(!studyMode)
-          break
-        case 'Escape':
-          if (studyMode) {
-            setStudyMode(false)
-            break
-          }
-          if (tool !== 'select') {
-            setTool('select')
-            window.getSelection()?.removeAllRanges()
-            break
-          }
-          setSidebar(false)
-          setNoteDraft(null)
-          setShortcutsOpen(false)
-          break
-        default:
-          break
+    let pinchStartDist = 0
+    let pinchStartZoom = 1
+    let swipeStartX = 0
+    let swipeStartY = 0
+    let swipeStartTime = 0
+    let trackingSwipe = false
+
+    const touchDist = (a: Touch, b: Touch): number =>
+      Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+
+    const onTouchStart = (event: TouchEvent): void => {
+      if (event.touches.length === 2) {
+        trackingSwipe = false
+        pinchStartDist = touchDist(event.touches[0], event.touches[1])
+        pinchStartZoom = settings.zoom
+        return
+      }
+      if (event.touches.length === 1 && tool === 'select' && settings.mode === 'page') {
+        trackingSwipe = true
+        swipeStartX = event.touches[0].clientX
+        swipeStartY = event.touches[0].clientY
+        swipeStartTime = performance.now()
       }
     }
 
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  })
+    const onTouchMove = (event: TouchEvent): void => {
+      if (event.touches.length === 2 && pinchStartDist > 20) {
+        event.preventDefault()
+        const dist = touchDist(event.touches[0], event.touches[1])
+        const ratio = dist / pinchStartDist
+        const nextZoom = Math.max(0.5, Math.min(4.5, pinchStartZoom * ratio))
+        setSettings((current) => ({ ...current, fit: 'custom', zoom: nextZoom }))
+      }
+    }
+
+    const onTouchEnd = (event: TouchEvent): void => {
+      if (event.touches.length < 2) {
+        pinchStartDist = 0
+      }
+      if (trackingSwipe && event.changedTouches.length === 1 && event.touches.length === 0) {
+        trackingSwipe = false
+        const elapsed = performance.now() - swipeStartTime
+        const dx = event.changedTouches[0].clientX - swipeStartX
+        const dy = event.changedTouches[0].clientY - swipeStartY
+        const atBaseZoom = settings.fit !== 'custom' || settings.zoom <= 1.05
+        if (atBaseZoom && elapsed < 420 && Math.abs(dx) > 64 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+          if (dx < 0) nextPage()
+          else previousPage()
+        }
+      }
+    }
+
+    viewport.addEventListener('touchstart', onTouchStart, { passive: true })
+    viewport.addEventListener('touchmove', onTouchMove, { passive: false })
+    viewport.addEventListener('touchend', onTouchEnd, { passive: true })
+    return () => {
+      viewport.removeEventListener('touchstart', onTouchStart)
+      viewport.removeEventListener('touchmove', onTouchMove)
+      viewport.removeEventListener('touchend', onTouchEnd)
+    }
+  }, [settings.mode, settings.fit, settings.zoom, tool, nextPage, previousPage])
 
   const continuousWindow = useMemo(() => {
     if (settings.mode !== 'continuous') return []
@@ -1303,10 +1581,22 @@ export function ReaderView() {
     return Array.from({ length: Math.max(0, end - start + 1) }, (_, index) => start + index)
   }, [settings.mode, page, pageCount])
 
-  const pageAnnotations = (target: number): Annotation[] =>
-    annotations.filter((annotation) => annotation.page === target)
+  const annotationsByPage = useMemo(() => {
+    const map = new Map<number, Annotation[]>()
+    for (const annotation of annotations) {
+      const list = map.get(annotation.page)
+      if (list) list.push(annotation)
+      else map.set(annotation.page, [annotation])
+    }
+    return map
+  }, [annotations])
 
-  const annotationPages = groupAnnotationPages(annotations, annotationFilter)
+  const pageAnnotations = (target: number): Annotation[] => annotationsByPage.get(target) ?? []
+
+  const annotationPages = useMemo(
+    () => groupAnnotationPages(annotations, annotationFilter),
+    [annotations, annotationFilter]
+  )
 
   if (!storeBookId) {
     return (
@@ -1809,6 +2099,7 @@ export function ReaderView() {
                 <PdfPage
                   key={number}
                   pdf={pdf}
+                  pageCache={pageCacheRef.current}
                   number={number}
                   containerWidth={isSpread ? containerSize.width / 2 : containerSize.width}
                   containerHeight={containerSize.height}
@@ -1839,6 +2130,7 @@ export function ReaderView() {
                 <PdfPage
                   key={number}
                   pdf={pdf}
+                  pageCache={pageCacheRef.current}
                   number={number}
                   containerWidth={containerSize.width}
                   containerHeight={containerSize.height}
@@ -1872,7 +2164,13 @@ export function ReaderView() {
         </div>
 
         {sidebarOpen && !studyMode ? (
-          <aside className="reader__sidebar" style={{ width: settings.sidebarWidth }}>
+          <>
+            <div
+              className="reader__sidebar-scrim"
+              aria-hidden="true"
+              onClick={() => setSidebar(false)}
+            />
+            <aside className="reader__sidebar" style={{ width: settings.sidebarWidth }}>
             <div
               className="reader__resize"
               role="separator"
@@ -2152,6 +2450,7 @@ export function ReaderView() {
               </div>
             ) : null}
           </aside>
+          </>
         ) : null}
       </div>
 

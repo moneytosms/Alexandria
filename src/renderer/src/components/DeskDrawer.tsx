@@ -6,6 +6,7 @@ import { shelfDisplayName } from '../room/scene-builders'
 import { playSound } from '../sound'
 import { useLibraryStore } from '../state/library-store'
 import { useReaderStore } from '../state/reader-store'
+import { computeScholarQuests, getRankForXp, useScholarStore } from '../state/scholar-store'
 import {
   computeReadingStats,
   formatClock,
@@ -15,14 +16,15 @@ import {
   type TimerMode
 } from '../state/study-store'
 
-type Tab = 'desk' | 'inbox' | 'study'
+export type DeskTab = 'desk' | 'inbox' | 'study' | 'ledger'
 
 interface Props {
+  initialTab?: DeskTab
   onInspectBook?: (book: Book) => void
   onClose: () => void
 }
 
-export function DeskDrawer({ onInspectBook, onClose }: Props) {
+export function DeskDrawer({ initialTab = 'desk', onInspectBook, onClose }: Props) {
   const books = useLibraryStore((state) => state.books)
   const layout = useLibraryStore((state) => state.layout)
   const refresh = useLibraryStore((state) => state.refresh)
@@ -41,7 +43,9 @@ export function DeskDrawer({ onInspectBook, onClose }: Props) {
   const finishAndLog = useStudyStore((s) => s.finishAndLog)
   const setDailyGoal = useStudyStore((s) => s.setDailyGoal)
 
-  const [tab, setTab] = useState<Tab>('desk')
+  const scholarLedger = useScholarStore((s) => s.ledger)
+
+  const [tab, setTab] = useState<DeskTab>(initialTab)
   const [desk, setDesk] = useState<{ reading: Book[]; pinned: Book[]; finished: Book[] }>({
     reading: [],
     pinned: [],
@@ -50,6 +54,10 @@ export function DeskDrawer({ onInspectBook, onClose }: Props) {
   const [targetShelfId, setTargetShelfId] = useState<string>('auto')
   const [goalDraft, setGoalDraft] = useState<string>(String(dailyGoalMin))
   const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    setTab(initialTab)
+  }, [initialTab])
 
   useEffect(() => {
     void window.alexandria.deskBooks().then(setDesk)
@@ -89,6 +97,11 @@ export function DeskDrawer({ onInspectBook, onClose }: Props) {
     () => computeReadingStats(sessions, localDateKey(), dailyGoalMin),
     [sessions, dailyGoalMin]
   )
+
+  const rankInfo = useMemo(() => getRankForXp(scholarLedger.xp), [scholarLedger.xp])
+  const quests = useMemo(() => computeScholarQuests(scholarLedger), [scholarLedger])
+  const dailyQuests = useMemo(() => quests.filter((q) => q.category === 'daily'), [quests])
+  const discoveryQuests = useMemo(() => quests.filter((q) => q.category === 'discovery'), [quests])
 
   const open = (book: Book): void => {
     playSound('pull')
@@ -153,7 +166,7 @@ export function DeskDrawer({ onInspectBook, onClose }: Props) {
     targetSec > 0 ? formatClock(Math.max(0, targetSec - studyElapsed)) : formatClock(studyElapsed)
 
   return (
-    <aside className="shelf-drawer desk-drawer" aria-label="Reading desk, inbox and study tracker">
+    <aside className="shelf-drawer desk-drawer" aria-label="Reading desk, inbox, study tracker and scholar ledger">
       <header className="shelf-drawer__head">
         <div>
           <p className="eyebrow">Center Nave</p>
@@ -162,7 +175,9 @@ export function DeskDrawer({ onInspectBook, onClose }: Props) {
               ? 'The Reading Desk'
               : tab === 'inbox'
                 ? 'Inbox Cart'
-                : 'Study & Reading Stats'}
+                : tab === 'study'
+                  ? 'Study & Reading Stats'
+                  : 'Scholar Ledger'}
           </h2>
         </div>
         <button className="icon-button" type="button" onClick={onClose} aria-label="Close desk">
@@ -194,6 +209,14 @@ export function DeskDrawer({ onInspectBook, onClose }: Props) {
           onClick={() => setTab('study')}
         >
           Study {studyRunning ? `· ${displayTime}` : ''}
+        </button>
+        <button
+          type="button"
+          className="chip"
+          aria-current={tab === 'ledger' ? 'true' : undefined}
+          onClick={() => setTab('ledger')}
+        >
+          Ledger · {rankInfo.current.crest}
         </button>
       </div>
 
@@ -254,10 +277,7 @@ export function DeskDrawer({ onInspectBook, onClose }: Props) {
           {inbox.length > 0 ? (
             <label className="desk-inbox__dest">
               <span>Shelve into</span>
-              <select
-                value={targetShelfId}
-                onChange={(e) => setTargetShelfId(e.target.value)}
-              >
+              <select value={targetShelfId} onChange={(e) => setTargetShelfId(e.target.value)}>
                 <option value="auto">First open shelf</option>
                 {allShelves.map(({ shelf, label }) => (
                   <option key={shelf.id} value={String(shelf.id)}>
@@ -297,7 +317,7 @@ export function DeskDrawer({ onInspectBook, onClose }: Props) {
             </ul>
           )}
         </div>
-      ) : (
+      ) : tab === 'study' ? (
         <div className="desk-drawer__scroll study-panel">
           <section className="study-timer-card">
             <div className="study-timer-card__modes">
@@ -379,7 +399,9 @@ export function DeskDrawer({ onInspectBook, onClose }: Props) {
 
           <section className="study-goal">
             <div className="study-goal__head">
-              <span>Daily goal ({stats.todayMinutes}/{stats.dailyGoalMin} min)</span>
+              <span>
+                Daily goal ({stats.todayMinutes}/{stats.dailyGoalMin} min)
+              </span>
               <span>{stats.goalPercent}%</span>
             </div>
             <div className="book-preview__bar">
@@ -424,6 +446,67 @@ export function DeskDrawer({ onInspectBook, onClose }: Props) {
               </ul>
             </section>
           ) : null}
+        </div>
+      ) : (
+        <div className="desk-drawer__scroll study-panel">
+          <section className="ledger-rank-card">
+            <div className="ledger-rank-card__top">
+              <span className="ledger-rank-card__crest">{rankInfo.current.crest}</span>
+              <div className="ledger-rank-card__meta">
+                <span className="ledger-rank-card__eyebrow">Scholar Standing</span>
+                <strong className="ledger-rank-card__title">{rankInfo.current.title}</strong>
+              </div>
+              <span className="ledger-rank-card__xp">{scholarLedger.xp} XP</span>
+            </div>
+            <div className="book-preview__bar">
+              <span style={{ width: `${rankInfo.progressPercent}%` }} />
+            </div>
+            <p className="ledger-rank-card__sub">
+              {rankInfo.next
+                ? `${rankInfo.xpToNext} XP until ${rankInfo.next.title} · ${stats.streakDays}d reading streak`
+                : `Highest archival rank achieved · ${stats.streakDays}d reading streak`}
+            </p>
+          </section>
+
+          <section className="desk-group">
+            <h3>Daily Reading Quests</h3>
+            <ul className="ledger-quests">
+              {dailyQuests.map((q) => (
+                <li key={q.id} className={`ledger-quest ${q.completed ? 'ledger-quest--done' : ''}`}>
+                  <div className="ledger-quest__head">
+                    <span className="ledger-quest__title">{q.title}</span>
+                    <span className="ledger-quest__reward">
+                      {q.completed ? 'Complete' : `+${q.xpReward} XP`}
+                    </span>
+                  </div>
+                  <p className="ledger-quest__detail">{q.detail}</p>
+                  <div className="ledger-quest__bar">
+                    <span style={{ width: `${Math.round((q.current / q.target) * 100)}%` }} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section className="desk-group">
+            <h3>
+              Grand Hall Discoveries ({discoveryQuests.filter((q) => q.completed).length}/
+              {discoveryQuests.length})
+            </h3>
+            <ul className="ledger-quests">
+              {discoveryQuests.map((q) => (
+                <li key={q.id} className={`ledger-quest ${q.completed ? 'ledger-quest--done' : ''}`}>
+                  <div className="ledger-quest__head">
+                    <span className="ledger-quest__title">{q.title}</span>
+                    <span className="ledger-quest__reward">
+                      {q.completed ? 'Discovered' : `+${q.xpReward} XP`}
+                    </span>
+                  </div>
+                  <p className="ledger-quest__detail">{q.detail}</p>
+                </li>
+              ))}
+            </ul>
+          </section>
         </div>
       )}
     </aside>

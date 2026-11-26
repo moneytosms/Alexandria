@@ -151,4 +151,24 @@ describe('database', () => {
 
     db.close()
   })
+
+  it('applies migration v3 composite performance indexes', () => {
+    const db = openDatabase(':memory:')
+
+    expect(currentSchemaVersion()).toBe(3)
+
+    const indexes = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name")
+      .all()
+      .map((row) => String((row as { name: string }).name))
+
+    expect(indexes).toContain('idx_books_reading_state')
+    expect(indexes).toContain('idx_books_desk_pinned')
+    expect(indexes).toContain('idx_books_finished')
+    expect(indexes).toContain('idx_books_added')
+    expect(indexes).toContain('idx_book_tags_tag')
+    expect(indexes).toContain('idx_annotations_updated')
+
+    db.close()
+  })
 })

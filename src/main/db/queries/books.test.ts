@@ -10,6 +10,7 @@ import {
   markBookFinished,
   moveBookToShelf,
   removeBook,
+  reorderShelf,
   updateReadingProgress
 } from './books'
 
@@ -129,5 +130,38 @@ describe('book queries', () => {
 
     expect(getBook(db, book.id)).toBeNull()
     expect(db.prepare('SELECT COUNT(*) AS n FROM annotations').get()).toEqual({ n: 0 })
+  })
+
+  it('aggregates tags via LEFT JOIN cleanly for books with zero, one, or multiple tags', () => {
+    const untagged = addBook({ title: 'Untagged', sha256: 'hash-u' })
+    const multi = addBook({ title: 'Tagged', sha256: 'hash-t' })
+
+    db.exec("INSERT INTO tags (name) VALUES ('philosophy'), ('history')")
+    db.prepare('INSERT INTO book_tags (book_id, tag_id) VALUES (?, 1), (?, 2)').run(
+      multi.id,
+      multi.id
+    )
+
+    const fetchedUntagged = getBook(db, untagged.id)
+    const fetchedMulti = getBook(db, multi.id)
+    expect(fetchedUntagged?.tags).toEqual([])
+    expect(fetchedMulti?.tags?.slice().sort()).toEqual(['history', 'philosophy'])
+
+    const all = listBooks(db)
+    const byId = new Map(all.map((b) => [b.id, b]))
+    expect(byId.get(untagged.id)?.tags).toEqual([])
+    expect(byId.get(multi.id)?.tags?.slice().sort()).toEqual(['history', 'philosophy'])
+  })
+
+  it('reorders books on a shelf atomically inside a transaction', () => {
+    const a = addBook({ title: 'Alpha', sha256: 'hash-a' })
+    const b = addBook({ title: 'Beta', sha256: 'hash-b' })
+    const c = addBook({ title: 'Gamma', sha256: 'hash-c' })
+
+    reorderShelf(db, 1, [c.id, a.id, b.id])
+
+    expect(getBook(db, c.id)?.slotIndex).toBe(0)
+    expect(getBook(db, a.id)?.slotIndex).toBe(1)
+    expect(getBook(db, b.id)?.slotIndex).toBe(2)
   })
 })

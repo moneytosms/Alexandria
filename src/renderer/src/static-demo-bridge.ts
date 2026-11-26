@@ -17,12 +17,21 @@ import type {
   Tag
 } from '@shared/types'
 import {
+  clearVault,
+  deleteVaultEntry,
+  listVaultPdfIds,
+  loadAllVaultCovers,
+  loadVaultPdf,
+  saveVaultCover,
+  saveVaultPdf
+} from './demo-vault'
+import {
   SAMPLE_FOLIOS,
   generateSampleCoverDataUrl,
   generateSamplePdf
 } from './sample-pdfs'
 
-const STORAGE_KEY = 'alexandria-static-demo-v1'
+const STORAGE_KEY = 'alexandria-static-demo-v2'
 
 interface DemoState {
   settings: Record<string, string>
@@ -40,6 +49,22 @@ const pdfBuffers = new Map<number, Uint8Array>()
 const coverDataUrls = new Map<number, string>()
 const stagedFiles = new Map<string, File>()
 let stagedCounter = 0
+let demoBridgeActive = false
+
+export function isDemoBridgeActive(): boolean {
+  return demoBridgeActive
+}
+
+function estimatePdfPageCount(bytes: Uint8Array): number {
+  try {
+    const sample = new TextDecoder('latin1').decode(bytes)
+    const matches = sample.match(/\/Type\s*\/Page\b(?!s)/g)
+    if (matches && matches.length > 0) return matches.length
+  } catch {
+    // Fallback to null-safe 1
+  }
+  return 1
+}
 
 function seedInitialData(): DemoState {
   const now = new Date().toISOString()
@@ -87,7 +112,7 @@ function seedInitialData(): DemoState {
                       capacity: 18,
                       sortMode: 'manual',
                       sortDir: 'asc',
-                      bookCount: 1
+                      bookCount: 2
                     }
                   ]
                 }
@@ -96,7 +121,7 @@ function seedInitialData(): DemoState {
             {
               id: 101,
               roomId: 10,
-              name: 'Philosophy & Rhetoric',
+              name: 'Philosophy & Stars',
               wall: 'east',
               sortIndex: 1,
               bays: [
@@ -109,12 +134,76 @@ function seedInitialData(): DemoState {
                     {
                       id: 10003,
                       bayId: 1001,
-                      label: 'Reading Reserve',
+                      label: 'Star Catalogs',
                       rowIndex: 0,
                       capacity: 18,
                       sortMode: 'manual',
                       sortDir: 'asc',
-                      bookCount: 0
+                      bookCount: 1
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              id: 102,
+              roomId: 10,
+              name: 'Mathematics & Optics',
+              wall: 'west',
+              sortIndex: 2,
+              bays: [
+                {
+                  id: 1002,
+                  sectionId: 102,
+                  sortIndex: 0,
+                  autoCreated: false,
+                  shelves: [
+                    {
+                      id: 10004,
+                      bayId: 1002,
+                      label: 'Conic Studies',
+                      rowIndex: 0,
+                      capacity: 18,
+                      sortMode: 'manual',
+                      sortDir: 'asc',
+                      bookCount: 1
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              id: 103,
+              roomId: 10,
+              name: 'Upper Gallery Reserve',
+              wall: 'south',
+              sortIndex: 3,
+              bays: [
+                {
+                  id: 1003,
+                  sectionId: 103,
+                  sortIndex: 0,
+                  autoCreated: false,
+                  shelves: [
+                    {
+                      id: 10005,
+                      bayId: 1003,
+                      label: 'Harmonics & Focus',
+                      rowIndex: 0,
+                      capacity: 18,
+                      sortMode: 'manual',
+                      sortDir: 'asc',
+                      bookCount: 1
+                    },
+                    {
+                      id: 10006,
+                      bayId: 1003,
+                      label: 'Rare Nook Vault',
+                      rowIndex: 1,
+                      capacity: 18,
+                      sortMode: 'manual',
+                      sortDir: 'asc',
+                      bookCount: 1
                     }
                   ]
                 }
@@ -126,10 +215,14 @@ function seedInitialData(): DemoState {
     }
   ]
 
-  const books: Book[] = SAMPLE_FOLIOS.map((spec, idx) => {
+  const slotCounters = new Map<number, number>()
+  const books: Book[] = SAMPLE_FOLIOS.map((spec) => {
     const bytes = generateSamplePdf(spec)
     pdfBuffers.set(spec.id, bytes)
     coverDataUrls.set(spec.id, generateSampleCoverDataUrl(spec))
+    const slot = slotCounters.get(spec.shelfId) ?? 0
+    slotCounters.set(spec.shelfId, slot + 1)
+
     return {
       id: spec.id,
       title: spec.title,
@@ -144,15 +237,15 @@ function seedInitialData(): DemoState {
       pageCount: spec.pages.length,
       coverPath: `demo-cover://${spec.id}`,
       encrypted: false,
-      shelfId: idx < 2 ? 10001 : 10002,
-      slotIndex: idx < 2 ? idx : 0,
-      readingState: idx === 0 ? 'reading' : 'unread',
-      deskPinned: idx === 0,
+      shelfId: spec.shelfId,
+      slotIndex: slot,
+      readingState: spec.readingState ?? 'unread',
+      deskPinned: Boolean(spec.deskPinned),
       lastPage: 1,
       lastScroll: 0,
-      finishedAt: null,
+      finishedAt: spec.readingState === 'finished' ? now : null,
       addedAt: now,
-      lastOpenedAt: idx === 0 ? now : null,
+      lastOpenedAt: spec.readingState === 'reading' ? now : null,
       metadataJson: null,
       readerJson: null,
       unlockedAt: null,
@@ -205,7 +298,7 @@ function seedInitialData(): DemoState {
     books,
     annotations,
     tags,
-    nextBookId: 10,
+    nextBookId: 20,
     nextAnnotationId: 10,
     nextContainerId: 20000,
     nextTagId: tags.length + 1
@@ -218,21 +311,32 @@ function hydrateDemoState(): DemoState {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return fresh
     const parsed = JSON.parse(raw) as Partial<DemoState>
-    // Ensure sample PDF buffers & covers are always ready
     for (const spec of SAMPLE_FOLIOS) {
       if (!pdfBuffers.has(spec.id)) pdfBuffers.set(spec.id, generateSamplePdf(spec))
       if (!coverDataUrls.has(spec.id)) coverDataUrls.set(spec.id, generateSampleCoverDataUrl(spec))
     }
-    const books = (parsed.books ?? fresh.books).filter(
-      (b) => pdfBuffers.has(b.id)
-    )
+    const books = Array.isArray(parsed.books) && parsed.books.length > 0 ? parsed.books : fresh.books
+    // Guarantee generated cover URLs exist immediately for uploaded books before IndexedDB finishes
+    for (const book of books) {
+      if (!coverDataUrls.has(book.id)) {
+        coverDataUrls.set(
+          book.id,
+          generateSampleCoverDataUrl({
+            title: book.title,
+            author: book.author ?? 'Imported Volume',
+            accent: '#C8A25B',
+            spineColor: '#2a221b'
+          })
+        )
+      }
+    }
     return {
       settings: { ...fresh.settings, ...(parsed.settings ?? {}) },
       floors: parsed.floors && parsed.floors.length > 0 ? parsed.floors : fresh.floors,
-      books: books.length > 0 ? books : fresh.books,
+      books,
       annotations: parsed.annotations ?? fresh.annotations,
       tags: parsed.tags ?? fresh.tags,
-      nextBookId: Math.max(parsed.nextBookId ?? 10, 10),
+      nextBookId: Math.max(parsed.nextBookId ?? 20, 20),
       nextAnnotationId: Math.max(parsed.nextAnnotationId ?? 10, 10),
       nextContainerId: Math.max(parsed.nextContainerId ?? 20000, 20000),
       nextTagId: Math.max(parsed.nextTagId ?? 20, 20)
@@ -272,45 +376,38 @@ function recomputeShelfCounts(state: DemoState): void {
 
 function recomputeTags(state: DemoState): void {
   const counts = new Map<string, number>()
-  for (const tag of state.tags) counts.set(tag.name, 0)
   for (const book of state.books) {
-    for (const tagName of book.tags) {
-      counts.set(tagName, (counts.get(tagName) ?? 0) + 1)
+    for (const tag of book.tags) {
+      counts.set(tag, (counts.get(tag) ?? 0) + 1)
     }
   }
-  const existing = new Map(state.tags.map((t) => [t.name, t.id]))
-  state.tags = Array.from(counts.entries()).map(([name, count]) => ({
-    id: existing.get(name) ?? state.nextTagId++,
-    name,
-    count
-  }))
-}
-
-function getAllShelves(floors: Floor[]): Array<{ id: number; capacity: number }> {
-  const list: Array<{ id: number; capacity: number }> = []
-  for (const floor of floors) {
-    for (const room of floor.rooms) {
-      for (const section of room.sections) {
-        for (const bay of section.bays) {
-          for (const shelf of bay.shelves) {
-            list.push({ id: shelf.id, capacity: shelf.capacity })
-          }
-        }
-      }
-    }
+  const existingByName = new Map(state.tags.map((t) => [t.name, t]))
+  const next: Tag[] = []
+  for (const [name, count] of counts.entries()) {
+    const existing = existingByName.get(name)
+    next.push({ id: existing?.id ?? state.nextTagId++, name, count })
   }
-  return list
+  state.tags = next
 }
 
-function promptBrowserPdfFiles(): Promise<File[]> {
+function getAllShelves(floors: Floor[]) {
+  return floors
+    .flatMap((f) => f.rooms)
+    .flatMap((r) => r.sections)
+    .flatMap((s) => s.bays)
+    .flatMap((b) => b.shelves)
+}
+
+function promptBrowserFiles(options: { accept?: string; multiple?: boolean }): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = '.pdf'
-    input.multiple = true
+    if (options.accept) input.accept = options.accept
+    if (options.multiple) input.multiple = true
     input.style.position = 'fixed'
     input.style.left = '-9999px'
     document.body.appendChild(input)
+
     let settled = false
     const finish = (files: File[]): void => {
       if (settled) return
@@ -325,13 +422,64 @@ function promptBrowserPdfFiles(): Promise<File[]> {
 }
 
 export function getDemoCoverUrl(bookId: number): string {
-  return coverDataUrls.get(bookId) ?? ''
+  const existing = coverDataUrls.get(bookId)
+  if (existing) return existing
+  const spec = SAMPLE_FOLIOS.find((s) => s.id === bookId)
+  if (spec) {
+    const url = generateSampleCoverDataUrl(spec)
+    coverDataUrls.set(bookId, url)
+    return url
+  }
+  return generateSampleCoverDataUrl({
+    title: 'Alexandria Volume',
+    author: 'Imported Folio',
+    accent: '#C8A25B',
+    spineColor: '#2a221b'
+  })
+}
+
+export async function resetStaticDemoLibrary(): Promise<void> {
+  try {
+    window.localStorage.removeItem(STORAGE_KEY)
+  } catch {
+    // Ignore
+  }
+  await clearVault()
+  pdfBuffers.clear()
+  coverDataUrls.clear()
+  window.location.reload()
 }
 
 export function createStaticDemoApi(): AlexandriaApi {
+  demoBridgeActive = true
   const state = hydrateDemoState()
-  recomputeShelfCounts(state)
   const progressListeners = new Set<(progress: ImportProgress) => void>()
+
+  // Hydrate persistent uploaded PDFs and covers asynchronously from IndexedDB vault
+  const vaultReady: Promise<void> = (async () => {
+    try {
+      const [vaultIds, vaultCovers] = await Promise.all([
+        listVaultPdfIds(),
+        loadAllVaultCovers()
+      ])
+      for (const [id, dataUrl] of vaultCovers.entries()) {
+        coverDataUrls.set(id, dataUrl)
+      }
+      // Prune stale uploaded entries only if their binary truly does not exist in IndexedDB
+      const sampleIds = new Set(SAMPLE_FOLIOS.map((s) => s.id))
+      const filtered = state.books.filter(
+        (b) => sampleIds.has(b.id) || pdfBuffers.has(b.id) || vaultIds.has(b.id)
+      )
+      if (filtered.length !== state.books.length) {
+        state.books = filtered
+        recomputeShelfCounts(state)
+        recomputeTags(state)
+        persistDemoState(state)
+      }
+    } catch {
+      // Non-fatal if IndexedDB is disabled in private mode
+    }
+  })()
 
   const getBookOrThrow = (id: number): Book => {
     const found = state.books.find((b) => b.id === id)
@@ -345,7 +493,11 @@ export function createStaticDemoApi(): AlexandriaApi {
     for (const file of files) {
       const lower = file.name.toLowerCase()
       if (!lower.endsWith('.pdf')) {
-        rejected.push({ path: file.name, name: file.name, reason: 'unsupported' })
+        rejected.push({
+          path: file.name,
+          name: file.name,
+          reason: 'unsupported'
+        })
         continue
       }
       stagedCounter += 1
@@ -362,39 +514,38 @@ export function createStaticDemoApi(): AlexandriaApi {
     return { candidates, rejected }
   }
 
+  const isNativeAndroid =
+    import.meta.env.VITE_ANDROID_APP === 'true' ||
+    (typeof window !== 'undefined' &&
+      Boolean(
+        (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.()
+      ))
+
   return {
     ping: async () => 'pong',
     appInfo: async () => ({
       name: 'Alexandria',
-      version: '0.1.0',
-      electron: 'static-web-demo',
-      chrome: 'browser',
-      node: 'browser',
-      platform: 'Web Demo Sandbox'
+      version: isNativeAndroid ? '1.0.0' : '1.0.0-web',
+      electron: isNativeAndroid ? 'android-capacitor' : 'browser-pwa',
+      chrome: typeof navigator !== 'undefined' ? navigator.userAgent : 'browser',
+      node: isNativeAndroid ? 'android-webview' : 'browser',
+      platform: isNativeAndroid ? 'Android (Capacitor)' : 'Web & PWA Edition'
     }),
     libraryInfo: async (): Promise<LibraryInfo> => {
-      let sections = 0
-      let shelves = 0
-      let slots = 0
-      for (const floor of state.floors) {
-        for (const room of floor.rooms) {
-          sections += room.sections.length
-          for (const section of room.sections) {
-            for (const bay of section.bays) {
-              shelves += bay.shelves.length
-              for (const shelf of bay.shelves) slots += shelf.capacity
-            }
-          }
-        }
-      }
+      await vaultReady
+      const shelves = getAllShelves(state.floors)
+      const sections = state.floors.reduce(
+        (acc, f) => acc + f.rooms.reduce((rAcc, r) => rAcc + r.sections.length, 0),
+        0
+      )
       return {
-        root: 'Browser Sandbox (Static Demo)',
-        name: 'Alexandria Demo',
+        name: isNativeAndroid ? 'Alexandria Vault' : 'Alexandria Interactive Hall',
+        root: isNativeAndroid ? 'android://alexandria-vault' : 'browser://alexandria-vault',
         books: state.books.length,
         floors: state.floors.length,
         sections,
-        shelves,
-        slots
+        shelves: shelves.length,
+        slots: shelves.reduce((acc, s) => acc + s.capacity, 0)
       }
     },
     getSettings: async () => ({ ...state.settings }),
@@ -413,8 +564,14 @@ export function createStaticDemoApi(): AlexandriaApi {
       }
     },
 
-    pickImportFiles: async () => stageFilesToScan(await promptBrowserPdfFiles()),
-    pickImportFolder: async () => stageFilesToScan(await promptBrowserPdfFiles()),
+    pickImportFiles: async () => {
+      const files = await promptBrowserFiles({ accept: '.pdf,application/pdf', multiple: true })
+      return stageFilesToScan(files)
+    },
+    pickImportFolder: async () => {
+      const files = await promptBrowserFiles({ accept: '.pdf,application/pdf', multiple: true })
+      return stageFilesToScan(files)
+    },
     scanImportPaths: async (paths) => {
       const files: File[] = []
       for (const path of paths) {
@@ -424,13 +581,16 @@ export function createStaticDemoApi(): AlexandriaApi {
       return stageFilesToScan(files)
     },
     importBooks: async (paths): Promise<ImportBatchResult> => {
+      await vaultReady
       const outcomes: ImportBatchResult['outcomes'] = []
       let imported = 0
       let failed = 0
       const shelves = getAllShelves(state.floors)
-      const defaultShelfId = shelves[0]?.id ?? null
+      const destinationPref = state.settings['import.destination'] ?? 'shelf'
+      const openShelf = shelves.find((s) => s.bookCount < s.capacity) ?? shelves[0] ?? null
+      const defaultShelfId = destinationPref === 'inbox' ? null : (openShelf?.id ?? null)
 
-      for (let i = 0; i < paths.length; i++) {
+      for (let i = 0; i < paths.length; i += 1) {
         const path = paths[i]
         const file = stagedFiles.get(path)
         const name = file?.name ?? path.split('/').pop() ?? 'document.pdf'
@@ -444,26 +604,28 @@ export function createStaticDemoApi(): AlexandriaApi {
         }
         try {
           const bytes = new Uint8Array(await file.arrayBuffer())
+          if (bytes.byteLength < 8) {
+            throw new Error('Selected file is empty or unreadable')
+          }
           const id = state.nextBookId++
-          pdfBuffers.set(id, bytes)
+          const pageCount = estimatePdfPageCount(bytes)
           const title = name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').trim() || 'Untitled Folio'
-          coverDataUrls.set(
-            id,
-            generateSampleCoverDataUrl({
-              id,
-              title,
-              author: 'Imported Volume',
-              accent: '#C8A25B',
-              spineColor: '#2a221b',
-              tags: ['Imported'],
-              pages: []
-            })
-          )
+          const coverUrl = generateSampleCoverDataUrl({
+            title,
+            author: 'Uploaded Folio',
+            accent: '#C8A25B',
+            spineColor: '#2a221b'
+          })
+
+          pdfBuffers.set(id, bytes)
+          coverDataUrls.set(id, coverUrl)
+          await Promise.all([saveVaultPdf(id, bytes), saveVaultCover(id, coverUrl)])
+
           const now = new Date().toISOString()
           const book: Book = {
             id,
             title,
-            author: 'Local Import',
+            author: 'Local Upload',
             format: 'pdf',
             originalFormat: 'pdf',
             filePath: path,
@@ -471,11 +633,14 @@ export function createStaticDemoApi(): AlexandriaApi {
             storageMode: 'copy',
             sha256: `demo-upload-${id}-${bytes.byteLength}`,
             fileSize: bytes.byteLength,
-            pageCount: null,
+            pageCount,
             coverPath: `demo-cover://${id}`,
             encrypted: false,
             shelfId: defaultShelfId,
-            slotIndex: state.books.filter((b) => b.shelfId === defaultShelfId).length,
+            slotIndex:
+              defaultShelfId !== null
+                ? state.books.filter((b) => b.shelfId === defaultShelfId).length
+                : 0,
             readingState: 'unread',
             deskPinned: false,
             lastPage: 1,
@@ -515,15 +680,34 @@ export function createStaticDemoApi(): AlexandriaApi {
       }
     },
 
-    listBooks: async () => state.books.map((b) => ({ ...b, tags: [...b.tags] })),
+    listBooks: async () => {
+      await vaultReady
+      return state.books.map((b) => ({ ...b, tags: [...b.tags] }))
+    },
     getBook: async (id) => {
+      await vaultReady
       const found = state.books.find((b) => b.id === id)
       return found ? { ...found, tags: [...found.tags] } : null
     },
     bookData: async (id) => {
-      const bytes = pdfBuffers.get(id)
-      if (!bytes) throw new Error('Book PDF not found in demo session')
-      return bytes.slice()
+      await vaultReady
+      const inMem = pdfBuffers.get(id)
+      if (inMem) return inMem.slice()
+
+      const spec = SAMPLE_FOLIOS.find((s) => s.id === id)
+      if (spec) {
+        const generated = generateSamplePdf(spec)
+        pdfBuffers.set(id, generated)
+        return generated.slice()
+      }
+
+      const fromVault = await loadVaultPdf(id)
+      if (fromVault) {
+        pdfBuffers.set(id, fromVault)
+        return fromVault.slice()
+      }
+
+      throw new Error('Book PDF not found in browser vault. Re-import the PDF to keep reading.')
     },
     updateBook: async (id, patch) => {
       const book = getBookOrThrow(id)
@@ -536,6 +720,9 @@ export function createStaticDemoApi(): AlexandriaApi {
     removeBook: async (id) => {
       state.books = state.books.filter((b) => b.id !== id)
       state.annotations = state.annotations.filter((a) => a.bookId !== id)
+      pdfBuffers.delete(id)
+      coverDataUrls.delete(id)
+      await deleteVaultEntry(id)
       recomputeShelfCounts(state)
       recomputeTags(state)
       persistDemoState(state)
@@ -581,12 +768,14 @@ export function createStaticDemoApi(): AlexandriaApi {
     },
     unlockBook: async (id) => ({ ...getBookOrThrow(id) }),
     bookDetails: async (id): Promise<BookDetails> => {
+      await vaultReady
       const book = getBookOrThrow(id)
+      const hasFile = pdfBuffers.has(id) || (await loadVaultPdf(id)) !== null
       return {
         book: { ...book, tags: [...book.tags] },
         annotationCount: state.annotations.filter((a) => a.bookId === id).length,
         tags: state.tags.filter((t) => book.tags.includes(t.name)),
-        fileExists: pdfBuffers.has(id)
+        fileExists: hasFile
       }
     },
     setBookTags: async (id, tags) => {
@@ -598,19 +787,40 @@ export function createStaticDemoApi(): AlexandriaApi {
     },
     scanMissing: async () => ({ checked: state.books.length, missing: [] }),
     relinkMissing: async () => ({ matched: 0, stillMissing: 0 }),
-    exportLibrary: async () => ({
-      path: 'alexandria-demo-manifest.json',
-      books: state.books.length,
-      annotations: state.annotations.length
-    }),
+    exportLibrary: async () => {
+      const manifest = {
+        format: 'alexandria-manifest',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        books: state.books,
+        annotations: state.annotations,
+        tags: state.tags
+      }
+      try {
+        const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `alexandria-catalogue-${new Date().toISOString().slice(0, 10)}.json`
+        a.click()
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+      } catch {
+        // Ignore download restriction in headless environments
+      }
+      return {
+        path: 'alexandria-catalogue.json',
+        books: state.books.length,
+        annotations: state.annotations.length
+      }
+    },
     libraryHealth: async () => ({
-      database: 'ok (in-browser demo)',
-      schemaVersion: 1,
+      database: 'ok (browser vault)',
+      schemaVersion: 3,
       books: state.books.length,
       pages: state.books.reduce((acc, b) => acc + (b.pageCount ?? 0), 0),
       annotations: state.annotations.length,
       missing: 0,
-      logFile: 'browser-memory'
+      logFile: 'browser-indexeddb'
     }),
     reorderShelf: async (shelfId, orderedIds) => {
       orderedIds.forEach((bookId, idx) => {
@@ -619,17 +829,25 @@ export function createStaticDemoApi(): AlexandriaApi {
       })
       persistDemoState(state)
     },
-    deskBooks: async (): Promise<DeskBooks> => ({
-      reading: state.books.filter((b) => b.readingState === 'reading'),
-      pinned: state.books.filter((b) => b.deskPinned),
-      finished: state.books.filter((b) => b.readingState === 'finished')
-    }),
+    deskBooks: async (): Promise<DeskBooks> => {
+      await vaultReady
+      return {
+        reading: state.books.filter((b) => b.readingState === 'reading'),
+        pinned: state.books.filter((b) => b.deskPinned),
+        finished: state.books.filter((b) => b.readingState === 'finished')
+      }
+    },
 
-    getLayout: async () => structuredClone(state.floors),
+    getLayout: async () => {
+      await vaultReady
+      return structuredClone(state.floors)
+    },
     createContainer: async (input: ContainerCreateInput) => {
       const id = state.nextContainerId++
       if (input.kind === 'section') {
-        const room = state.floors.flatMap((f) => f.rooms).find((r) => r.id === input.parentId) ?? state.floors[0]?.rooms[0]
+        const room =
+          state.floors.flatMap((f) => f.rooms).find((r) => r.id === input.parentId) ??
+          state.floors[0]?.rooms[0]
         if (room) {
           const bayId = state.nextContainerId++
           const shelfId = state.nextContainerId++
@@ -657,6 +875,32 @@ export function createStaticDemoApi(): AlexandriaApi {
                     bookCount: 0
                   }
                 ]
+              }
+            ]
+          })
+        }
+      } else if (input.kind === 'bay') {
+        const section = state.floors
+          .flatMap((f) => f.rooms)
+          .flatMap((r) => r.sections)
+          .find((s) => s.id === input.parentId)
+        if (section) {
+          const shelfId = state.nextContainerId++
+          section.bays.push({
+            id,
+            sectionId: section.id,
+            sortIndex: section.bays.length,
+            autoCreated: false,
+            shelves: [
+              {
+                id: shelfId,
+                bayId: id,
+                label: 'Shelf I',
+                rowIndex: 0,
+                capacity: 18,
+                sortMode: 'manual',
+                sortDir: 'asc',
+                bookCount: 0
               }
             ]
           })
@@ -801,7 +1045,7 @@ export function createStaticDemoApi(): AlexandriaApi {
               title: book.title,
               author: book.author,
               page: 1,
-              snippet: `${book.title} — ${book.author ?? 'Unknown author'}`,
+              snippet: `${book.title} · ${book.author ?? 'Unknown author'}`,
               kind: 'title'
             })
           }

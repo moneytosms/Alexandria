@@ -523,7 +523,7 @@ async function startServer(): Promise<void> {
         return
       }
       res.setHeader('Content-Type', 'image/png')
-      res.setHeader('Cache-Control', 'public, max-age=86400')
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
       res.send(await readFile(fullPath))
     } catch {
       res.status(404).end()
@@ -542,7 +542,7 @@ async function startServer(): Promise<void> {
       const cached = join(library.paths.thumbs, `${id}-${page}.png`)
       if (existsSync(cached)) {
         res.setHeader('Content-Type', 'image/png')
-        res.setHeader('Cache-Control', 'public, max-age=86400')
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
         res.send(await readFile(cached))
         return
       }
@@ -572,7 +572,7 @@ async function startServer(): Promise<void> {
       await mkdir(dirname(cached), { recursive: true })
       await writeFile(cached, buffer)
       res.setHeader('Content-Type', 'image/png')
-      res.setHeader('Cache-Control', 'public, max-age=86400')
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
       res.send(buffer)
     } catch {
       res.status(404).end()

@@ -37,8 +37,11 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      - name: Build web bundle
+      - name: Build web PWA bundle
         run: npm run build
+
+      - name: Build Android web bundle
+        run: npm run build:android
 
       - name: Build Electron bundle
         run: npm run build:electron

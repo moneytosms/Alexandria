@@ -1,6 +1,10 @@
 import { create } from 'zustand'
 import { playSound } from '../sound'
+import { localDateKey } from './date-key'
+import { useScholarStore } from './scholar-store'
 import { getSettingValue, useSettingsStore } from './settings-store'
+
+export { localDateKey }
 
 export type TimerMode = 'pomodoro25' | 'deep50' | 'stopwatch'
 
@@ -23,13 +27,6 @@ export interface ReadingStatsSummary {
   totalPages: number
   sessionsCount: number
   recentSessions: StudySessionRecord[]
-}
-
-export function localDateKey(date = new Date()): string {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
 }
 
 export function modeDurationSeconds(mode: TimerMode): number {
@@ -220,6 +217,7 @@ export const useStudyStore = create<StudyState>((set, get) => ({
     })
     playSound('chime')
     await useSettingsStore.getState().setValue(SESSIONS_KEY, JSON.stringify(nextSessions))
+    useScholarStore.getState().recordStudySession(elapsed)
   },
 
   tickSecond: () => {

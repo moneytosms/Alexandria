@@ -43,6 +43,10 @@ function parseHash(hash: string): ViewId {
   return (viewIds as readonly string[]).includes(value) ? (value as ViewId) : 'room'
 }
 
+export function currentView(): ViewId {
+  return parseHash(window.location.hash)
+}
+
 export function navigate(view: ViewId): void {
   window.location.hash = `/${view}`
 }

@@ -62,6 +62,25 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
-    plugins: [react(), cspPlugin()]
+    plugins: [react(), cspPlugin()],
+    build: {
+      chunkSizeWarningLimit: 700,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules/three/')) return 'vendor-three'
+            if (id.includes('node_modules/pdfjs-dist/')) return 'vendor-pdfjs'
+            if (
+              id.includes('node_modules/react/') ||
+              id.includes('node_modules/react-dom/') ||
+              id.includes('node_modules/zustand/')
+            ) {
+              return 'vendor-react'
+            }
+            return undefined
+          }
+        }
+      }
+    }
   }
 })

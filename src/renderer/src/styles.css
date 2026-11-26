@@ -834,8 +834,7 @@ button {
   z-index: 100;
   display: grid;
   place-items: center;
-  background: rgba(12, 10, 9, 0.72);
-  backdrop-filter: blur(6px);
+  background: rgba(10, 8, 7, 0.86);
   pointer-events: none;
 }
 
@@ -3136,8 +3135,7 @@ kbd {
   z-index: 60;
   display: grid;
   place-items: center;
-  background: rgba(12, 10, 9, 0.7);
-  backdrop-filter: blur(4px);
+  background: rgba(10, 8, 7, 0.84);
 }
 
 .dialog {
@@ -3538,8 +3536,7 @@ kbd {
   align-items: start;
   justify-items: center;
   padding: 9vh 1.5rem 2rem;
-  background: rgba(8, 7, 6, 0.72);
-  backdrop-filter: blur(6px);
+  background: rgba(8, 7, 6, 0.86);
 }
 
 .search-palette {
@@ -5004,4 +5001,909 @@ kbd {
     opacity: 0.85;
   }
 }
+
+/* ==========================================================================
+   Immersive Hall Extensions: Observatory, Atlas Wayfinder, Guided Tour,
+   Scholar Ledger, Discovery Toast & Secret Study Nook Mini-Map
+   ========================================================================== */
+
+.minimap__nook {
+  fill: rgba(227, 194, 107, 0.22);
+  stroke: var(--brass-bright);
+  stroke-width: 0.9;
+  stroke-dasharray: 2 1.5;
+}
+
+.minimap__marker--nook circle {
+  fill: #e7c877;
+}
+
+.minimap__marker--ladder circle {
+  fill: #c79f61;
+}
+
+/* Observatory Brass Refractor Modal */
+
+.observatory-modal {
+  width: min(860px, calc(100vw - 2.5rem));
+  padding: 1.35rem 1.5rem 1.5rem;
+  background: var(--hud-panel);
+  border: 1px solid var(--hud-border);
+  box-shadow: 0 32px 84px rgba(0, 0, 0, 0.68);
+}
+
+.observatory-modal__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.observatory-modal__head h2 {
+  margin: 0.25rem 0 0;
+  font-size: clamp(1.55rem, 2.4vw, 2rem);
+}
+
+.observatory-modal__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(240px, 0.95fr);
+  gap: 1.25rem;
+  margin-top: 1rem;
+}
+
+.observatory-modal__lens {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--hud-border);
+  background: #07080d;
+  cursor: grab;
+  user-select: none;
+}
+
+.observatory-modal__lens:active {
+  cursor: grabbing;
+}
+
+.observatory-modal__lens canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.observatory-modal__drag-hint {
+  position: absolute;
+  left: 0.7rem;
+  bottom: 0.55rem;
+  font-size: 0.54rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(235, 221, 194, 0.68);
+  pointer-events: none;
+}
+
+.observatory-modal__sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.95rem;
+}
+
+.observatory-modal__section .eyebrow {
+  margin: 0 0 0.45rem;
+}
+
+.observatory-modal__list {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.observatory-modal__item {
+  padding: 0.45rem 0.6rem;
+  text-align: left;
+  font-family: var(--serif);
+  font-size: 0.96rem;
+  color: var(--parchment);
+  background: rgba(176, 141, 87, 0.05);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.observatory-modal__item:hover {
+  border-color: var(--brass);
+}
+
+.observatory-modal__item--on {
+  border-color: var(--brass-bright);
+  background: rgba(176, 141, 87, 0.2);
+  color: var(--brass-bright);
+}
+
+.observatory-modal__note {
+  padding: 0.7rem 0.8rem;
+  background: rgba(176, 141, 87, 0.06);
+  border-left: 2px solid var(--brass);
+}
+
+.observatory-modal__note p {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.52;
+  color: var(--parchment);
+}
+
+.observatory-modal__latin {
+  margin-bottom: 0.35rem !important;
+  font-size: 0.54rem !important;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--brass-bright) !important;
+}
+
+.observatory-modal__moods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+/* Hall Atlas Wayfinder Modal */
+
+.atlas-modal {
+  width: min(760px, calc(100vw - 2.5rem));
+  padding: 1.35rem 1.5rem 1.45rem;
+  background: var(--hud-panel);
+  border: 1px solid var(--hud-border);
+  box-shadow: 0 32px 84px rgba(0, 0, 0, 0.68);
+}
+
+.atlas-modal__intro {
+  margin: 0.85rem 0 1.05rem;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.atlas-modal__cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.25rem;
+}
+
+.atlas-modal__cols .eyebrow {
+  margin: 0 0 0.55rem;
+}
+
+.atlas-modal__grid {
+  display: grid;
+  gap: 0.38rem;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 0.2rem;
+}
+
+.atlas-modal__spot {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.14rem;
+  padding: 0.52rem 0.68rem;
+  text-align: left;
+  background: rgba(176, 141, 87, 0.05);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.atlas-modal__spot:hover {
+  border-color: var(--brass-bright);
+  background: rgba(176, 141, 87, 0.15);
+}
+
+.atlas-modal__spot-title {
+  font-family: var(--serif);
+  font-size: 0.96rem;
+  color: var(--parchment);
+}
+
+.atlas-modal__spot-meta {
+  font-size: 0.56rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.atlas-modal__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  margin-top: 1.15rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
+}
+
+/* Guided Grand Hall Tour Editorial Card (zero backdrop-filter over WebGL) */
+
+.tour-card {
+  position: absolute;
+  left: 1.5rem;
+  bottom: 5.5rem;
+  z-index: 9;
+  width: min(440px, calc(100vw - 3rem));
+  padding: 1rem 1.15rem 0.95rem;
+  background: var(--hud-panel);
+  border: 1px solid var(--hud-border);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.62);
+}
+
+.tour-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.45rem;
+}
+
+.tour-card__chapter {
+  font-size: 0.56rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--brass-bright);
+}
+
+.tour-card__progress {
+  display: flex;
+  gap: 0.22rem;
+}
+
+.tour-card__bar {
+  width: 1.35rem;
+  height: 2px;
+  background: rgba(176, 141, 87, 0.24);
+}
+
+.tour-card__bar--on {
+  background: var(--brass-bright);
+}
+
+.tour-card__title {
+  margin: 0 0 0.38rem;
+  font-family: var(--serif);
+  font-size: 1.38rem;
+  font-weight: 400;
+  line-height: 1.15;
+  color: var(--parchment);
+}
+
+.tour-card__caption {
+  margin: 0 0 0.85rem;
+  font-size: 0.76rem;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.tour-card__controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.tour-card__btn {
+  padding: 0.34rem 0.66rem;
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--parchment);
+  background: rgba(176, 141, 87, 0.08);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.tour-card__btn:hover:not(:disabled) {
+  border-color: var(--brass);
+  color: var(--brass-bright);
+}
+
+.tour-card__btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.tour-card__btn--primary {
+  color: var(--ink);
+  background: var(--brass);
+  border-color: var(--brass);
+}
+
+.tour-card__btn--primary:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--brass-bright);
+  border-color: var(--brass-bright);
+}
+
+.tour-card__exit {
+  margin-left: auto;
+  padding: 0.34rem 0.55rem;
+  font-size: 0.56rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.tour-card__exit:hover {
+  color: var(--parchment);
+  border-color: var(--line);
+}
+
+/* Scholar Ledger Tab inside DeskDrawer */
+
+.ledger-rank-card {
+  padding: 0.9rem 0.95rem;
+  background: rgba(176, 141, 87, 0.08);
+  border: 1px solid var(--hud-border);
+}
+
+.ledger-rank-card__top {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-bottom: 0.65rem;
+}
+
+.ledger-rank-card__crest {
+  display: grid;
+  place-items: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  flex-shrink: 0;
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  color: var(--ink);
+  background: var(--brass);
+  border: 1px solid var(--brass-bright);
+}
+
+.ledger-rank-card__meta {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.ledger-rank-card__eyebrow {
+  font-size: 0.52rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ledger-rank-card__title {
+  font-family: var(--serif);
+  font-size: 1.2rem;
+  font-weight: 400;
+  color: var(--parchment);
+}
+
+.ledger-rank-card__xp {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--brass-bright);
+  white-space: nowrap;
+}
+
+.ledger-rank-card__sub {
+  margin: 0.5rem 0 0;
+  font-size: 0.66rem;
+  color: var(--muted);
+}
+
+.ledger-quests {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: none !important;
+}
+
+.ledger-quest {
+  display: flex !important;
+  flex-direction: column;
+  align-items: stretch !important;
+  gap: 0.25rem !important;
+  padding: 0.62rem 0.72rem !important;
+  background: rgba(176, 141, 87, 0.04);
+  border: 1px solid var(--line) !important;
+}
+
+.ledger-quest--done {
+  background: rgba(176, 141, 87, 0.12);
+  border-color: rgba(176, 141, 87, 0.42) !important;
+}
+
+.ledger-quest__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.ledger-quest__title {
+  font-family: var(--serif);
+  font-size: 0.94rem;
+  color: var(--parchment);
+}
+
+.ledger-quest__reward {
+  font-size: 0.54rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--brass-bright);
+  white-space: nowrap;
+}
+
+.ledger-quest__detail {
+  margin: 0;
+  font-size: 0.68rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.ledger-quest__bar {
+  height: 3px;
+  margin-top: 0.22rem;
+  background: rgba(176, 141, 87, 0.16);
+}
+
+.ledger-quest__bar span {
+  display: block;
+  height: 100%;
+  background: var(--brass);
+}
+
+/* Scholar Discovery Toast Notification */
+
+.scholar-toast {
+  position: absolute;
+  top: 1.25rem;
+  left: 50%;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  max-width: min(410px, calc(100vw - 2rem));
+  padding: 0.58rem 0.85rem;
+  background: var(--hud-panel);
+  border: 1px solid var(--brass);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.58);
+  transform: translateX(-50%);
+  cursor: pointer;
+}
+
+.scholar-toast__crest {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex-shrink: 0;
+  font-family: var(--serif);
+  font-size: 0.86rem;
+  color: var(--ink);
+  background: var(--brass);
+}
+
+.scholar-toast__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.scholar-toast__kicker {
+  font-size: 0.52rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--brass-bright);
+}
+
+.scholar-toast__title {
+  font-family: var(--serif);
+  font-size: 0.96rem;
+  font-weight: 400;
+  color: var(--parchment);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scholar-toast__xp {
+  margin-left: auto;
+  padding-left: 0.4rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--brass-bright);
+  white-space: nowrap;
+}
+
+@media (max-width: 780px) {
+  .observatory-modal__body,
+  .atlas-modal__cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tour-card {
+    left: 1rem;
+    bottom: 4.8rem;
+    width: calc(100vw - 2rem);
+  }
+}
+
+/* Lazy-view suspense fallback */
+
+.view-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  width: 100%;
+  height: 100%;
+  min-height: 260px;
+  color: var(--muted);
+  background: var(--obsidian);
+}
+
+.view-loading__crest {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  font-family: var(--serif);
+  font-size: 1.35rem;
+  color: var(--brass-bright);
+  border: 1px solid rgba(176, 141, 87, 0.4);
+  background: rgba(176, 141, 87, 0.08);
+}
+
+.view-loading__text {
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* Touch-safe marking overlays in PDF Reader */
+
+.pdf-page__highlight-layer,
+.pdf-page__ink--active {
+  touch-action: none;
+}
+
+/* Virtual Analog Touch Thumbstick for 3D Grand Hall */
+
+.touch-pad {
+  position: fixed;
+  left: 1.25rem;
+  bottom: 5.25rem;
+  z-index: 25;
+  display: grid;
+  place-items: center;
+  width: 108px;
+  height: 108px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, rgba(28, 23, 18, 0.78), rgba(14, 12, 10, 0.92));
+  border: 1px solid rgba(176, 141, 87, 0.42);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.48);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.touch-pad--active {
+  border-color: var(--brass-bright);
+}
+
+.touch-pad__crosshair {
+  position: absolute;
+  inset: 22px;
+  border-radius: 50%;
+  border: 1px dashed rgba(176, 141, 87, 0.22);
+  pointer-events: none;
+}
+
+.touch-pad__knob {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #e0bd82, #9b7742);
+  border: 1px solid rgba(255, 240, 208, 0.45);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.touch-pad__label {
+  position: absolute;
+  bottom: -1.2rem;
+  font-size: 0.56rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(210, 174, 118, 0.75);
+  pointer-events: none;
+}
+
+/* Progressive pagination button in IndexView */
+
+.index__more {
+  display: flex;
+  justify-content: center;
+  padding: 1rem 0 0.5rem;
+}
+
+/* Mobile Sidebar Scrim for PDF Reader */
+
+.reader__sidebar-scrim {
+  display: none;
+}
+
+/* Coarse-pointer touch target guarantees (>= 44px) */
+
+@media (pointer: coarse) {
+  .slimbar__link,
+  .slimbar__action,
+  .slimbar__icon,
+  .game-dock__btn,
+  .reader__bar .tool,
+  .reader__bar .icon-button,
+  .chip,
+  .button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Mobile & Narrow Tablet Responsive Ergonomics (< 768px) */
+
+@media (max-width: 768px) {
+  .slimbar {
+    gap: 0.5rem;
+    padding: 0.45rem 0.75rem;
+  }
+
+  .slimbar__nav {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .slimbar__nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .game-dock {
+    left: 0.5rem;
+    right: 0.5rem;
+    bottom: 0.5rem;
+    max-width: calc(100vw - 1rem);
+    transform: none;
+  }
+
+  .game-dock__bar {
+    overflow-x: auto;
+    max-width: 100%;
+    scrollbar-width: none;
+  }
+
+  .game-dock__bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .reader__bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 0.4rem;
+    padding: 0.35rem 0.65rem;
+    scrollbar-width: none;
+  }
+
+  .reader__bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .reader__sidebar-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 48;
+    background: rgba(8, 7, 6, 0.72);
+  }
+
+  .reader__sidebar {
+    position: fixed !important;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    width: 100% !important;
+    max-height: 68vh;
+    border-left: none;
+    border-top: 1px solid rgba(176, 141, 87, 0.4);
+    box-shadow: 0 -20px 50px rgba(0, 0, 0, 0.65);
+  }
+
+  .reader__resize {
+    display: none;
+  }
+
+  /* Responsive mobile catalog card collapse */
+  .index__table thead {
+    display: none;
+  }
+
+  .index__table,
+  .index__table tbody,
+  .index__table tr,
+  .index__table td {
+    display: block;
+    width: 100%;
+  }
+
+  .index__row {
+    margin-bottom: 0.7rem;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--line);
+    background: rgba(22, 18, 15, 0.78);
+  }
+
+  .index__row td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.25rem 0;
+    border: none;
+  }
+
+  .index__row td:first-child {
+    display: block;
+    padding-bottom: 0.5rem;
+    margin-bottom: 0.35rem;
+    border-bottom: 1px solid rgba(176, 141, 87, 0.12);
+  }
+
+  .index__row td:not(:first-child)::before {
+    content: attr(data-label);
+    font-size: 0.6rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+}
+
+/* PWA install controls, offline indicator, and native mobile safe areas */
+
+.pwa-install-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  padding: 0.42rem 0.78rem;
+  border: 1px solid rgba(210, 174, 118, 0.55);
+  background: rgba(176, 141, 87, 0.16);
+  color: var(--brass-bright);
+  font-family: var(--sans);
+  font-size: 0.74rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.pwa-install-btn:hover {
+  border-color: var(--brass-bright);
+  background: rgba(176, 141, 87, 0.28);
+  color: var(--ink);
+}
+
+.pwa-install-btn--compact {
+  padding: 0.34rem 0.62rem;
+  font-size: 0.72rem;
+}
+
+.pwa-room-install {
+  position: fixed;
+  top: max(1rem, env(safe-area-inset-top));
+  right: max(1rem, env(safe-area-inset-right));
+  z-index: 38;
+  pointer-events: auto;
+}
+
+.pwa-room-install:empty {
+  display: none;
+}
+
+.pwa-ios-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(8, 6, 5, 0.8);
+}
+
+.pwa-ios-modal__card {
+  width: min(360px, 100%);
+  padding: 1.4rem;
+  border: 1px solid var(--line-strong);
+  background: #14100d;
+  color: var(--ink);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+
+.pwa-ios-modal__card h3 {
+  margin: 0 0 0.65rem;
+  font-family: var(--serif);
+  font-size: 1.25rem;
+  font-weight: 500;
+  color: var(--brass-bright);
+}
+
+.pwa-ios-modal__card p {
+  margin: 0 0 1.1rem;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  color: var(--ink-dim);
+}
+
+.pwa-ios-modal__close {
+  width: 100%;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--line-strong);
+  background: rgba(176, 141, 87, 0.14);
+  color: var(--ink);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.pwa-offline-pill {
+  position: fixed;
+  left: max(1rem, env(safe-area-inset-left));
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  z-index: 70;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.42rem 0.8rem;
+  border: 1px solid rgba(210, 174, 118, 0.45);
+  background: rgba(18, 14, 11, 0.94);
+  color: var(--brass-bright);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+.pwa-offline-pill__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #d4a64a;
+}
+
+.platform-native-android .slimbar,
+.platform-native-android .reader__bar {
+  padding-top: env(safe-area-inset-top);
+}
+
+.platform-native-android .touch-pad {
+  bottom: calc(1.25rem + env(safe-area-inset-bottom));
+  left: calc(1.1rem + env(safe-area-inset-left));
+}
+
+
 

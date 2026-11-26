@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import { GALLERY_Y, ROOM_DEPTH, ROOM_WIDTH, STAIR_SPEC, WALKWAY_DEPTH } from '../room/physics'
+import {
+  GALLERY_Y,
+  ROOM_DEPTH,
+  ROOM_WIDTH,
+  SECRET_NOOK_BOUNDS,
+  STAIR_SPEC,
+  WALKWAY_DEPTH
+} from '../room/physics'
 
 export interface MiniMapMarker {
   id: string
   anchorId: string
   label: string
-  kind: 'shelf' | 'desk' | 'globe' | 'gramophone' | 'fireplace' | 'balcony' | 'stairs'
+  kind: 'shelf' | 'desk' | 'globe' | 'gramophone' | 'fireplace' | 'balcony' | 'stairs' | 'nook' | 'ladder'
   x: number
   z: number
   level: 1 | 2
@@ -193,6 +200,14 @@ export function MiniMapHud({ markers, poseRef, onJump, visible, onToggleVisible 
               width={toSvgX(ROOM_WIDTH / 2) - toSvgX(STAIR_SPEC.southBalconyMaxX)}
               height={toSvgY(ROOM_DEPTH / 2) - toSvgY(STAIR_SPEC.f2EndZ)}
               className="minimap__stairs"
+            />
+            {/* Secret Upper Study Nook alcove (South-West) */}
+            <rect
+              x={toSvgX(SECRET_NOOK_BOUNDS.minX)}
+              y={toSvgY(SECRET_NOOK_BOUNDS.minZ)}
+              width={toSvgX(SECRET_NOOK_BOUNDS.maxX) - toSvgX(SECRET_NOOK_BOUNDS.minX)}
+              height={toSvgY(SECRET_NOOK_BOUNDS.maxZ) - toSvgY(SECRET_NOOK_BOUNDS.minZ)}
+              className="minimap__nook"
             />
           </>
         )}

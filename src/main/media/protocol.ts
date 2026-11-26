@@ -36,7 +36,7 @@ function image(buffer: Buffer): Response {
   return new Response(new Uint8Array(buffer), {
     headers: {
       'content-type': 'image/png',
-      'cache-control': 'public, max-age=86400'
+      'cache-control': 'public, max-age=31536000, immutable'
     }
   })
 }
@@ -69,7 +69,10 @@ async function coverResponse(id: number): Promise<Response> {
 
   const data = await readFile(path)
   return new Response(new Uint8Array(data), {
-    headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' }
+    headers: {
+      'content-type': 'image/png',
+      'cache-control': 'public, max-age=31536000, immutable'
+    }
   })
 }
 

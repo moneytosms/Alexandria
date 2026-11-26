@@ -1,15 +1,22 @@
 import type { LibraryInfo } from '@shared/api'
 import type { Book, Floor, Room, Shelf, Wall } from '@shared/types'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { AtmospherePopover } from '../components/AtmospherePopover'
 import { BookCover } from '../components/BookCover'
 import { BookPreviewCard } from '../components/BookPreviewCard'
-import { DeskDrawer } from '../components/DeskDrawer'
+import type { DeskTab } from '../components/DeskDrawer'
+import { HALL_TOUR_STOPS, HallTourOverlay } from '../components/HallTourOverlay'
 import { MiniMapHud, type MiniMapMarker, type MiniMapPlayerPose } from '../components/MiniMapHud'
+import { TouchMovePad, type TouchMoveVector } from '../components/TouchMovePad'
 import { pickImportFiles } from '../import-actions'
+import { formatShortcut, usePlatformCapabilities } from '../platform'
 import { navigate } from '../router'
+import {
+  AdaptiveQualityGovernor,
+  normalizeQualityPreference
+} from '../room/adaptive-quality'
 import {
   HALL_MOOD_RIGS,
   normalizeHallMood,
@@ -21,7 +28,9 @@ import { MovementInputController, normalizeMoveKey } from '../room/controls'
 import {
   EYE_HEIGHT,
   GALLERY_Y,
-  resolveWalkPosition
+  isInsideSecretNook,
+  resolveWalkPosition,
+  stairHeightAt
 } from '../room/physics'
 import {
   BOOK_COLORS,
@@ -30,12 +39,24 @@ import {
   type RoomAnchor,
   type SpinePlacement
 } from '../room/scene-builders'
+import { RARE_NOOK_BOOK_ID } from '../sample-pdfs'
 import { playSound, useAmbientStore } from '../sound'
 import { useLibraryStore } from '../state/library-store'
 import { useReaderStore } from '../state/reader-store'
+import { getRankForXp, useScholarStore } from '../state/scholar-store'
 import { useSetting, useSettingsStore } from '../state/settings-store'
 import { formatClock, modeDurationSeconds, useStudyStore } from '../state/study-store'
 import { usePlayerStore, useUiStore } from '../state/ui-store'
+
+const DeskDrawer = lazy(() =>
+  import('../components/DeskDrawer').then((m) => ({ default: m.DeskDrawer }))
+)
+const ObservatoryModal = lazy(() =>
+  import('../components/ObservatoryModal').then((m) => ({ default: m.ObservatoryModal }))
+)
+const AtlasWayfinderModal = lazy(() =>
+  import('../components/AtlasWayfinderModal').then((m) => ({ default: m.AtlasWayfinderModal }))
+)
 
 interface Props {
   library: LibraryInfo | null
@@ -48,6 +69,7 @@ interface RoomStats {
   triangles: number
   books: number
   bookBatches: number
+  qualityTier: number
 }
 
 interface HoverTarget {
@@ -55,7 +77,17 @@ interface HoverTarget {
   hint: string
   bookId?: number
   shelfId?: number
-  kind?: 'desk' | 'gramophone' | 'globe' | 'fireplace' | 'balcony'
+  ladderIndex?: number
+  kind?:
+    | 'desk'
+    | 'gramophone'
+    | 'globe'
+    | 'fireplace'
+    | 'balcony'
+    | 'telescope'
+    | 'ladder'
+    | 'nook'
+    | 'nook-codex'
 }
 
 interface AnchorSummary {
@@ -71,14 +103,53 @@ const DEFAULT_FOV = 58
 const MIN_FOV = 40
 const MAX_FOV = 72
 
-function detectSoftwareGl(): boolean {
+function acquireWebGL2Context(
+  wantAntialias: boolean
+): { canvas: HTMLCanvasElement; gl: WebGL2RenderingContext; antialias: boolean } | null {
+  const attempts: Array<{ attrs?: WebGLContextAttributes; antialias: boolean }> = [
+    {
+      attrs: {
+        antialias: wantAntialias,
+        powerPreference: 'high-performance',
+        failIfMajorPerformanceCaveat: false
+      },
+      antialias: wantAntialias
+    },
+    {
+      attrs: {
+        antialias: false,
+        powerPreference: 'default',
+        failIfMajorPerformanceCaveat: false
+      },
+      antialias: false
+    },
+    {
+      attrs: undefined,
+      antialias: false
+    }
+  ]
+
+  for (const attempt of attempts) {
+    try {
+      const canvas = document.createElement('canvas')
+      const gl = (
+        attempt.attrs ? canvas.getContext('webgl2', attempt.attrs) : canvas.getContext('webgl2')
+      ) as WebGL2RenderingContext | null
+      if (gl && !gl.isContextLost()) {
+        return { canvas, gl, antialias: attempt.antialias }
+      }
+    } catch {
+      // Try next attribute set
+    }
+  }
+  return null
+}
+
+function isSoftwareGlContext(gl: WebGL2RenderingContext): boolean {
   try {
-    const gl = document.createElement('canvas').getContext('webgl2')
-    if (!gl) return true
     const ext = gl.getExtension('WEBGL_debug_renderer_info')
     const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER
-    const gpu = String(gl.getParameter(param))
-    gl.getExtension('WEBGL_lose_context')?.loseContext()
+    const gpu = String(gl.getParameter(param) ?? '')
     return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu)
   } catch {
     return false
@@ -615,11 +686,18 @@ export function RoomView({ library }: Props) {
   const studyModeType = useStudyStore((s) => s.mode)
   const studyElapsed = useStudyStore((s) => s.elapsedSec)
   const ambientEnabled = useAmbientStore((s) => s.enabled)
+  const scholarXp = useScholarStore((s) => s.ledger.xp)
+  const scholarToast = useScholarStore((s) => s.toast)
+  const clearScholarToast = useScholarStore((s) => s.clearToast)
+  const scholarRank = useMemo(() => getRankForXp(scholarXp), [scholarXp])
 
   const mountRef = useRef<HTMLDivElement | null>(null)
   const fpsToggleRef = useRef<(() => void) | null>(null)
   const resetViewRef = useRef<(() => void) | null>(null)
   const jumpToAnchorRef = useRef<((anchorId: string) => void) | null>(null)
+  const tourJumpRef = useRef<((stopIndex: number) => void) | null>(null)
+  const hearthLevelRef = useRef<0 | 1 | 2>(1)
+  const tourActiveRef = useRef(false)
   const miniMapPoseRef = useRef<MiniMapPlayerPose>({ x: 0, y: 0, z: 4.45, yaw: 0 })
   const cameraPoseRef = useRef<{
     roomId: number
@@ -633,6 +711,10 @@ export function RoomView({ library }: Props) {
   const clearKeysRef = useRef<(() => void) | null>(null)
   const popoverOpenRef = useRef(false)
   const modalOpenRef = useRef(false)
+  const touchMoveRef = useRef<TouchMoveVector>({ forward: 0, right: 0 })
+  const platform = usePlatformCapabilities()
+  const isTouchPrimaryRef = useRef(platform.isTouchPrimary)
+  isTouchPrimaryRef.current = platform.isTouchPrimary
 
   const [hovered, setHovered] = useState<HoverTarget | null>(null)
   const [fpsActive, setFpsActive] = useState(false)
@@ -641,12 +723,18 @@ export function RoomView({ library }: Props) {
   const [atmosphereOpen, setAtmosphereOpen] = useState(false)
   const [miniMapOpen, setMiniMapOpen] = useState(true)
   const [deskOpen, setDeskOpen] = useState(false)
+  const [deskInitialTab, setDeskInitialTab] = useState<DeskTab>('desk')
+  const [observatoryOpen, setObservatoryOpen] = useState(false)
+  const [atlasOpen, setAtlasOpen] = useState(false)
+  const [tourActive, setTourActive] = useState(false)
+  const [tourStopIndex, setTourStopIndex] = useState(0)
+  const [tourPaused, setTourPaused] = useState(false)
   const [renameFocus, setRenameFocus] = useState(false)
   const [previewBook, setPreviewBook] = useState<Book | null>(null)
   const [anchorList, setAnchorList] = useState<AnchorSummary[]>([])
   const [miniMapMarkers, setMiniMapMarkers] = useState<MiniMapMarker[]>([])
   const [scanning, setScanning] = useState(false)
-  const [contextLost, setContextLost] = useState(false)
+  const [webglStatus, setWebglStatus] = useState<'ok' | 'lost' | 'unavailable'>('ok')
 
   const searchOpen = useUiStore((state) => state.searchOpen)
   const settingsOpen = useUiStore((state) => state.settingsOpen)
@@ -663,12 +751,46 @@ export function RoomView({ library }: Props) {
   }, [placesOpen, atmosphereOpen])
 
   useEffect(() => {
-    const blocked = Boolean(previewBook || searchOpen || settingsOpen || tipsOpen)
+    tourActiveRef.current = tourActive
+  }, [tourActive])
+
+  useEffect(() => {
+    if (!tourActive) return
+    tourJumpRef.current?.(tourStopIndex)
+    if (tourPaused) return
+    const stop = HALL_TOUR_STOPS[tourStopIndex] ?? HALL_TOUR_STOPS[0]
+    const timer = window.setTimeout(() => {
+      if (tourStopIndex >= HALL_TOUR_STOPS.length - 1) {
+        setTourActive(false)
+        setTourPaused(false)
+      } else {
+        setTourStopIndex((idx) => idx + 1)
+      }
+    }, stop.durationMs)
+    return () => window.clearTimeout(timer)
+  }, [tourActive, tourStopIndex, tourPaused])
+
+  useEffect(() => {
+    const blocked = Boolean(
+      previewBook || searchOpen || settingsOpen || tipsOpen || observatoryOpen || atlasOpen
+    )
     modalOpenRef.current = blocked
     if (blocked || deskOpen || openShelfId !== null || placesOpen || atmosphereOpen || newWingOpen) {
       clearKeysRef.current?.()
     }
-  }, [previewBook, searchOpen, settingsOpen, tipsOpen, deskOpen, openShelfId, placesOpen, atmosphereOpen, newWingOpen])
+  }, [
+    previewBook,
+    searchOpen,
+    settingsOpen,
+    tipsOpen,
+    observatoryOpen,
+    atlasOpen,
+    deskOpen,
+    openShelfId,
+    placesOpen,
+    atmosphereOpen,
+    newWingOpen
+  ])
 
   const room = useMemo<Room | null>(() => {
     const direct = floors
@@ -715,13 +837,42 @@ export function RoomView({ library }: Props) {
     const mount = mountRef.current
     if (!mount || !room) return
 
-    const isSoftwareGl = detectSoftwareGl()
-    const useShadows = !isSoftwareGl && quality !== 'low'
+    const acquired = acquireWebGL2Context(quality !== 'low')
+    if (!acquired) {
+      setWebglStatus('unavailable')
+      return
+    }
+
+    const { canvas } = acquired
+    const isSoftwareGl = isSoftwareGlContext(acquired.gl)
+    const qualityPref = normalizeQualityPreference(quality)
+    const governor = new AdaptiveQualityGovernor({
+      preference: qualityPref,
+      isSoftwareGl,
+      isTouchPrimary: isTouchPrimaryRef.current,
+      devicePixelRatio: window.devicePixelRatio || 1
+    })
+    const initialProfile = governor.getProfile()
+    const useShadows = initialProfile.shadowsEnabled
     const pixelRatio = isSoftwareGl
       ? 1
-      : Math.min(window.devicePixelRatio, quality === 'low' ? 1 : quality === 'high' ? 2 : 1.5)
+      : Math.min(window.devicePixelRatio || 1, initialProfile.dprCap)
     const moodRig = HALL_MOOD_RIGS[mood]
 
+    let renderer: THREE.WebGLRenderer
+    try {
+      renderer = new THREE.WebGLRenderer({
+        canvas,
+        context: acquired.gl,
+        antialias: !isSoftwareGl && acquired.antialias,
+        powerPreference: 'high-performance'
+      })
+    } catch {
+      setWebglStatus('unavailable')
+      return
+    }
+
+    setWebglStatus('ok')
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(moodRig.background)
     scene.fog = new THREE.FogExp2(moodRig.fogColor, moodRig.fogDensity)
@@ -730,23 +881,22 @@ export function RoomView({ library }: Props) {
     const camera = new THREE.PerspectiveCamera(savedPose?.fov ?? DEFAULT_FOV, 1, 0.08, 60)
     camera.rotation.order = 'YXZ'
 
-    const renderer = new THREE.WebGLRenderer({
-      antialias: !isSoftwareGl && quality !== 'low',
-      powerPreference: 'high-performance'
-    })
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = moodRig.exposure
     renderer.setPixelRatio(pixelRatio)
     renderer.shadowMap.enabled = useShadows
+    renderer.shadowMap.autoUpdate = initialProfile.shadowAutoUpdate
+    renderer.shadowMap.needsUpdate = useShadows
     renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    renderer.domElement.style.touchAction = 'none'
     mount.appendChild(renderer.domElement)
 
     const onContextLost = (e: Event): void => {
       e.preventDefault()
-      setContextLost(true)
+      setWebglStatus('lost')
     }
-    const onContextRestored = (): void => setContextLost(false)
+    const onContextRestored = (): void => setWebglStatus('ok')
     renderer.domElement.addEventListener('webglcontextlost', onContextLost)
     renderer.domElement.addEventListener('webglcontextrestored', onContextRestored)
 
@@ -789,6 +939,52 @@ export function RoomView({ library }: Props) {
       mood
     )
     scene.add(built.group)
+
+    // O(1) book lookup table for hover & click raycasts (eliminates O(N) scans)
+    const roomBooksById = new Map<number, Book>()
+    for (const b of roomBooks) roomBooksById.set(b.id, b)
+
+    const totalDustCount = built.dust
+      ? built.dust.geometry.getAttribute('position')?.count ?? 0
+      : 0
+    const totalEmberCount = built.hearthEmbers
+      ? built.hearthEmbers.geometry.getAttribute('position')?.count ?? 0
+      : 0
+
+    const applyQualityProfile = (): void => {
+      const profile = governor.getProfile()
+      const nextDpr = isSoftwareGl
+        ? 1
+        : Math.min(window.devicePixelRatio || 1, profile.dprCap)
+      renderer.setPixelRatio(nextDpr)
+      renderer.setSize(mount.clientWidth, mount.clientHeight, false)
+      renderer.shadowMap.enabled = profile.shadowsEnabled
+      dirKey.castShadow = profile.shadowsEnabled
+      renderer.shadowMap.autoUpdate = profile.shadowAutoUpdate
+      if (profile.shadowsEnabled) renderer.shadowMap.needsUpdate = true
+      if (built.dust && totalDustCount > 0) {
+        built.dust.geometry.setDrawRange(0, Math.max(12, Math.round(totalDustCount * profile.particleRatio)))
+      }
+      if (built.hearthEmbers && totalEmberCount > 0) {
+        built.hearthEmbers.geometry.setDrawRange(
+          0,
+          Math.max(8, Math.round(totalEmberCount * profile.particleRatio))
+        )
+      }
+    }
+    applyQualityProfile()
+
+    // Subscribe to reactive audio state outside tick() to avoid store polling every frame
+    let musicPlaying = usePlayerStore.getState().playing
+    const unsubPlayer = usePlayerStore.subscribe((state) => {
+      musicPlaying = state.playing
+    })
+    let ambientEnabled = useAmbientStore.getState().enabled
+    let ambientFireLevel = useAmbientStore.getState().fire
+    const unsubAmbient = useAmbientStore.subscribe((state) => {
+      ambientEnabled = state.enabled
+      ambientFireLevel = state.fire
+    })
 
     setAnchorList(
       built.anchors.map((a) => ({
@@ -933,7 +1129,18 @@ export function RoomView({ library }: Props) {
       const anchor = built.anchors.find((a) => a.id === anchorId)
       if (!anchor) return
       playSound('tick')
+      if (tourActiveRef.current) setTourActive(false)
       glideTo(anchor.position, anchor.lookAt, anchor.level === 2 ? GALLERY_Y : 0)
+    }
+
+    tourJumpRef.current = (idx: number) => {
+      const stop = HALL_TOUR_STOPS[idx]
+      if (!stop) return
+      glideTo(
+        new THREE.Vector3(...stop.position),
+        new THREE.Vector3(...stop.lookAt),
+        stop.floorY
+      )
     }
 
     interface PullFlight {
@@ -1078,14 +1285,24 @@ export function RoomView({ library }: Props) {
         const data = hit.object.userData as {
           bookId?: number
           shelfId?: number
-          interactiveKind?: 'desk' | 'gramophone' | 'globe' | 'fireplace' | 'balcony'
+          ladderIndex?: number
+          interactiveKind?:
+            | 'desk'
+            | 'gramophone'
+            | 'globe'
+            | 'fireplace'
+            | 'balcony'
+            | 'telescope'
+            | 'ladder'
+            | 'nook'
+            | 'nook-codex'
           interactLabel?: string
           interactMeta?: string
           walkableFloor?: boolean
         }
 
         if (data.bookId) {
-          const found = roomBooks.find((b) => b.id === data.bookId)
+          const found = roomBooksById.get(data.bookId)
           if (found) {
             return {
               target: {
@@ -1102,7 +1319,7 @@ export function RoomView({ library }: Props) {
           return {
             target: {
               label: 'Reading Desk',
-              hint: 'Click to open Desk, Inbox & Study Stats',
+              hint: 'Click to open Desk, Inbox, Study Timer & Scholar Ledger',
               kind: 'desk'
             },
             floorPoint: null,
@@ -1113,7 +1330,7 @@ export function RoomView({ library }: Props) {
           return {
             target: {
               label: 'Hall Atlas Globe',
-              hint: 'Click to open Library Map',
+              hint: 'Click to spin & open the Hall Atlas Wayfinder',
               kind: 'globe'
             },
             floorPoint: null,
@@ -1132,22 +1349,62 @@ export function RoomView({ library }: Props) {
           }
         }
         if (data.interactiveKind === 'fireplace') {
+          const modeLabel =
+            hearthLevelRef.current === 0
+              ? 'Stoke to Warm Hearth'
+              : hearthLevelRef.current === 1
+                ? 'Stoke to Roaring Fire'
+                : 'Bank to Low Embers'
           return {
             target: {
-              label: 'Hall Fireplace Hearth',
-              hint: 'Click to toggle crackling fireplace audio',
+              label: 'Limestone Fireplace Hearth',
+              hint: `Click to ${modeLabel.toLowerCase()} & adjust crackle`,
               kind: 'fireplace'
             },
             floorPoint: null,
             placement: null
           }
         }
-        if (data.interactiveKind === 'balcony') {
+        if (data.interactiveKind === 'telescope' || data.interactiveKind === 'balcony') {
           return {
             target: {
-              label: 'Observatory Telescope',
-              hint: 'Click to overlook the Grand Hall from the mezzanine',
-              kind: 'balcony'
+              label: 'Observatory Brass Telescope',
+              hint: 'Click to peer through the star chart & shift hall sky',
+              kind: 'telescope'
+            },
+            floorPoint: null,
+            placement: null
+          }
+        }
+        if (data.interactiveKind === 'ladder') {
+          return {
+            target: {
+              label: data.interactLabel ?? 'Rolling Bookshelf Ladder',
+              hint: 'Click to roll along the brass track & climb to upper tiers',
+              kind: 'ladder',
+              ladderIndex: data.ladderIndex ?? 0
+            },
+            floorPoint: null,
+            placement: null
+          }
+        }
+        if (data.interactiveKind === 'nook') {
+          return {
+            target: {
+              label: 'Secret Study Nook Armchair',
+              hint: 'Click to settle into the candlelit upper gallery alcove',
+              kind: 'nook'
+            },
+            floorPoint: null,
+            placement: null
+          }
+        }
+        if (data.interactiveKind === 'nook-codex') {
+          return {
+            target: {
+              label: 'Codex Alexandrinus (Rare Vault)',
+              hint: 'Click to open the secret upper gallery manuscript',
+              kind: 'nook-codex'
             },
             floorPoint: null,
             placement: null
@@ -1177,9 +1434,10 @@ export function RoomView({ library }: Props) {
       floorPoint: THREE.Vector3 | null
     ): void => {
       if (pull) return
+      if (tourActiveRef.current) setTourActive(false)
 
       if (target?.bookId) {
-        const book = roomBooks.find((b) => b.id === target.bookId)
+        const book = roomBooksById.get(target.bookId)
         if (!book) return
         playSound('pull')
         if (document.pointerLockElement === renderer.domElement) {
@@ -1204,17 +1462,21 @@ export function RoomView({ library }: Props) {
         glideTo(new THREE.Vector3(0, EYE_HEIGHT, 2.65), new THREE.Vector3(0, 0.96, 0.35), 0)
         setPlacesOpen(false)
         setAtmosphereOpen(false)
+        setDeskInitialTab('desk')
         setDeskOpen(true)
         return
       }
 
       if (target?.kind === 'globe') {
         playSound('tick')
-        globeSpinBoost = 7
+        globeSpinBoost = 8.5
         if (document.pointerLockElement === renderer.domElement) {
           document.exitPointerLock()
         }
-        navigate('map')
+        useScholarStore.getState().recordDiscovery('globe', 'Hall Atlas Globe')
+        setPlacesOpen(false)
+        setAtmosphereOpen(false)
+        setAtlasOpen(true)
         return
       }
 
@@ -1231,19 +1493,75 @@ export function RoomView({ library }: Props) {
 
       if (target?.kind === 'fireplace') {
         playSound('tick')
+        const nextLevel = ((hearthLevelRef.current + 1) % 3) as 0 | 1 | 2
+        hearthLevelRef.current = nextLevel
         const amb = useAmbientStore.getState()
-        if (!amb.enabled || amb.fire < 0.1) {
-          amb.setChannel('fire', 0.6)
-          amb.setEnabled(true)
-        } else {
-          amb.setChannel('fire', 0)
+        const fireVolume = nextLevel === 0 ? 0.14 : nextLevel === 1 ? 0.55 : 0.95
+        amb.setChannel('fire', fireVolume)
+        amb.setEnabled(true)
+        useScholarStore.getState().recordDiscovery('hearth', 'Limestone Fireplace Hearth')
+        return
+      }
+
+      if (target?.kind === 'telescope' || target?.kind === 'balcony') {
+        playSound('tick')
+        if (document.pointerLockElement === renderer.domElement) {
+          document.exitPointerLock()
+        }
+        jumpToAnchorRef.current?.('balcony')
+        useScholarStore.getState().recordDiscovery('telescope', 'Observatory Brass Telescope')
+        setPlacesOpen(false)
+        setAtmosphereOpen(false)
+        setObservatoryOpen(true)
+        return
+      }
+
+      if (target?.kind === 'ladder') {
+        playSound('tick')
+        const rig = built.rollingLadders[target.ladderIndex ?? 0]
+        if (rig) {
+          const mid = (rig.minOffset + rig.maxOffset) / 2
+          const nextOffset =
+            rig.targetOffset <= mid
+              ? rig.maxOffset - 0.75
+              : rig.minOffset + 0.75
+          rig.targetOffset = nextOffset
+          const destPos = rig.vantagePos.clone()
+          const destLook = rig.lookAt.clone()
+          if (rig.axis === 'x') {
+            destPos.x = nextOffset
+            destLook.x = nextOffset
+          } else {
+            destPos.z = nextOffset
+            destLook.z = nextOffset
+          }
+          glideTo(destPos, destLook, GALLERY_Y)
+          useScholarStore.getState().recordDiscovery('ladder', rig.label)
         }
         return
       }
 
-      if (target?.kind === 'balcony') {
+      if (target?.kind === 'nook') {
         playSound('tick')
-        jumpToAnchorRef.current?.('balcony')
+        jumpToAnchorRef.current?.('nook')
+        useScholarStore.getState().recordDiscovery('secret-nook', 'Secret Upper Study Nook')
+        return
+      }
+
+      if (target?.kind === 'nook-codex') {
+        playSound('pull')
+        if (document.pointerLockElement === renderer.domElement) {
+          document.exitPointerLock()
+        }
+        useScholarStore.getState().recordDiscovery('secret-nook', 'Secret Upper Study Nook')
+        const rareBook =
+          roomBooks.find((b) => b.id === RARE_NOOK_BOOK_ID) ??
+          roomBooks.find((b) => b.title.toLowerCase().includes('codex')) ??
+          roomBooks[0]
+        if (rareBook) {
+          openBook(rareBook.id, rareBook.lastPage)
+          navigate('reader')
+        }
         return
       }
 
@@ -1264,14 +1582,24 @@ export function RoomView({ library }: Props) {
         playSound('tick')
         setPlacesOpen(false)
         setAtmosphereOpen(false)
-        const targetFloorY = floorPoint.y > 0.3 ? Math.min(GALLERY_Y, floorPoint.y) : 0
+        const exactStairY = stairHeightAt(floorPoint.x, floorPoint.z)
+        const targetFloorY =
+          exactStairY !== null && floorPoint.y > 0.15
+            ? exactStairY
+            : floorPoint.y > 0.35
+              ? Math.min(GALLERY_Y, floorPoint.y)
+              : 0
         walkRing.position.set(floorPoint.x, targetFloorY + 0.032, floorPoint.z)
         ringFade = 1
         const resolved = resolveWalkPosition(
           { x: floorPoint.x, y: targetFloorY, z: floorPoint.z },
           { x: floorPoint.x, z: floorPoint.z }
         )
-        glideTo(new THREE.Vector3(resolved.x, resolved.y + EYE_HEIGHT, resolved.z), undefined, resolved.y)
+        glideTo(
+          new THREE.Vector3(resolved.x, resolved.y + EYE_HEIGHT, resolved.z),
+          undefined,
+          resolved.y
+        )
       }
     }
 
@@ -1384,7 +1712,7 @@ export function RoomView({ library }: Props) {
         const res = raycastAt(nx, ny)
 
         if (wasRightClick && res.target?.bookId) {
-          const book = roomBooks.find((b) => b.id === res.target?.bookId)
+          const book = roomBooksById.get(res.target.bookId)
           if (book) {
             playSound('tick')
             setPreviewBook(book)
@@ -1506,7 +1834,10 @@ export function RoomView({ library }: Props) {
           event.preventDefault()
         }
         input.onKeyDown(moveToken, performance.now(), event.repeat)
-        if (moveToken !== 'Shift') cancelGlide()
+        if (moveToken !== 'Shift') {
+          cancelGlide()
+          if (tourActiveRef.current) setTourActive(false)
+        }
         return
       }
 
@@ -1617,6 +1948,9 @@ export function RoomView({ library }: Props) {
         setDeskOpen(false)
         setPlacesOpen(false)
         setAtmosphereOpen(false)
+        setObservatoryOpen(false)
+        setAtlasOpen(false)
+        setTourActive(false)
         setPreviewBook(null)
       }
     }
@@ -1631,15 +1965,53 @@ export function RoomView({ library }: Props) {
       isDragging = false
     }
 
+    // Two-finger pinch-to-zoom FOV on touch screens
+    let pinchStartDist = 0
+    let pinchStartFov = DEFAULT_FOV
+    const onTouchStart = (event: TouchEvent): void => {
+      if (event.touches.length === 2) {
+        isDragging = false
+        pinchStartDist = Math.hypot(
+          event.touches[0].clientX - event.touches[1].clientX,
+          event.touches[0].clientY - event.touches[1].clientY
+        )
+        pinchStartFov = targetFov
+      }
+    }
+    const onTouchMove = (event: TouchEvent): void => {
+      if (event.touches.length === 2 && pinchStartDist > 20) {
+        event.preventDefault()
+        const dist = Math.hypot(
+          event.touches[0].clientX - event.touches[1].clientX,
+          event.touches[0].clientY - event.touches[1].clientY
+        )
+        const ratio = pinchStartDist / Math.max(10, dist)
+        targetFov = Math.max(MIN_FOV, Math.min(MAX_FOV, pinchStartFov * ratio))
+      }
+    }
+    const onTouchEnd = (event: TouchEvent): void => {
+      if (event.touches.length < 2) pinchStartDist = 0
+    }
+
     const onVisibilityChange = (): void => {
       input.clear()
+      touchMoveRef.current = { forward: 0, right: 0 }
       if (document.hidden) {
         isDragging = false
+        cancelAnimationFrame(frameId)
+        clearTimeout(frameId)
+        frameId = 0
+      } else if (!disposed && frameId === 0) {
+        lastNow = performance.now()
+        tick()
       }
     }
 
     renderer.domElement.addEventListener('pointerdown', onPointerDown)
     renderer.domElement.addEventListener('dblclick', onDoubleClick)
+    renderer.domElement.addEventListener('touchstart', onTouchStart, { passive: true })
+    renderer.domElement.addEventListener('touchmove', onTouchMove, { passive: false })
+    renderer.domElement.addEventListener('touchend', onTouchEnd, { passive: true })
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', onPointerUp)
     renderer.domElement.addEventListener('wheel', onWheel, { passive: false })
@@ -1700,23 +2072,32 @@ export function RoomView({ library }: Props) {
 
     let wasMoving = false
     let wasTapOnly = false
+    let frameIndex = 0
 
     const tick = (): void => {
-      if (disposed) return
+      if (disposed || document.hidden) {
+        frameId = 0
+        return
+      }
       const now = performance.now()
       const dt = Math.min(0.08, Math.max(0.001, (now - lastNow) / 1000))
       lastNow = now
+      frameIndex += 1
 
-      if (document.hidden) {
-        scheduleNext()
-        return
+      const frameMs = dt * 1000
+      avgFrameMs = avgFrameMs * 0.9 + frameMs * 0.1
+      if (governor.recordFrame(frameMs)) {
+        applyQualityProfile()
       }
+      const activeProfile = governor.getProfile()
 
-      avgFrameMs = avgFrameMs * 0.9 + dt * 1000 * 0.1
-
-      // 1. WASD / Arrow first-person walking with continuous staircase & mezzanine elevation physics
+      // 1. WASD / Arrow + Touch Thumbstick first-person walking with continuous staircase & mezzanine elevation physics
       const sample = input.sample(now)
-      const { moveForward, moveRight, turnInput, sprint, isMoving, tapOnly } = sample
+      const touchVec = touchMoveRef.current
+      const moveForward = sample.moveForward + touchVec.forward
+      const moveRight = sample.moveRight + touchVec.right
+      const { turnInput, sprint, tapOnly } = sample
+      const isMoving = Math.abs(moveForward) > 0.04 || Math.abs(moveRight) > 0.04
 
       if (turnInput !== 0 && document.pointerLockElement !== renderer.domElement) {
         targetYaw += turnInput * 1.95 * dt
@@ -1724,10 +2105,14 @@ export function RoomView({ library }: Props) {
 
       if (isMoving) {
         const speed = sprint ? 5.8 : 3.6
-        const stepDt = tapOnly ? Math.max(dt, 0.095) : dt
-        const len = Math.hypot(moveForward, moveRight) || 1
-        const f = moveForward / len
-        const r = moveRight / len
+        const stepDt = tapOnly && Math.abs(touchVec.forward) < 0.04 && Math.abs(touchVec.right) < 0.04
+          ? Math.max(dt, 0.095)
+          : dt
+        const rawMag = Math.hypot(moveForward, moveRight)
+        const clampedMag = Math.min(1, rawMag)
+        const inv = rawMag > 0.0001 ? clampedMag / rawMag : 0
+        const f = moveForward * inv
+        const r = moveRight * inv
         const forwardX = -Math.sin(yaw)
         const forwardZ = -Math.cos(yaw)
         const rightX = Math.cos(yaw)
@@ -1857,7 +2242,7 @@ export function RoomView({ library }: Props) {
         built.orreryRings[1].rotation.x += dt * 0.19
         built.orreryRings[2].rotation.z -= dt * 0.24
       }
-      if (built.platter && usePlayerStore.getState().playing) {
+      if (built.platter && musicPlaying) {
         built.platter.rotation.y -= dt * 2.2
       }
       if (built.dust && !reducedMotion) {
@@ -1865,19 +2250,65 @@ export function RoomView({ library }: Props) {
         built.dust.position.y = Math.sin(now / 5000) * 0.06
       }
 
-      // Cozy animated fireplace hearth glow
+      // Cozy animated fireplace hearth glow, embers & 3-stage intensity
       if (built.hearthLight && built.hearthFlame) {
-        const amb = useAmbientStore.getState()
-        const fireBoost = amb.enabled && amb.fire > 0.05 ? 1 + amb.fire * 0.45 : 1
+        const levelMul = hearthLevelRef.current === 0 ? 0.42 : hearthLevelRef.current === 1 ? 1.0 : 1.55
+        const fireBoost = ambientEnabled && ambientFireLevel > 0.05 ? 1 + ambientFireLevel * 0.35 : 1
         const flicker = reducedMotion
           ? 1
           : 0.88 + Math.sin(now * 0.011) * 0.09 + Math.sin(now * 0.027) * 0.06
-        built.hearthLight.intensity = moodRig.fireplaceIntensity * fireBoost * flicker
+        built.hearthLight.intensity = moodRig.fireplaceIntensity * levelMul * fireBoost * flicker
+        const flameScale = hearthLevelRef.current === 0 ? 0.55 : hearthLevelRef.current === 1 ? 1.0 : 1.32
         built.hearthFlame.scale.set(
-          0.92 + (flicker - 0.88) * 0.8,
-          0.85 + (flicker - 0.85) * 1.4,
-          0.92 + (flicker - 0.88) * 0.8
+          (0.92 + (flicker - 0.88) * 0.8) * flameScale,
+          (0.85 + (flicker - 0.85) * 1.4) * flameScale,
+          (0.92 + (flicker - 0.88) * 0.8) * flameScale
         )
+      }
+
+      if (built.hearthEmbers && !reducedMotion && frameIndex % activeProfile.ambientStep === 0) {
+        const attr = built.hearthEmbers.geometry.getAttribute('position') as THREE.BufferAttribute
+        const stepDt = dt * activeProfile.ambientStep
+        const riseRate = hearthLevelRef.current === 0 ? 0.28 : hearthLevelRef.current === 1 ? 0.62 : 1.05
+        const limit = Math.min(attr.count, built.hearthEmbers.geometry.drawRange.count)
+        for (let i = 0; i < limit; i += 1) {
+          let ey = attr.getY(i) + stepDt * (riseRate + (i % 4) * 0.14)
+          let ex = attr.getX(i) + Math.sin(now * 0.004 + i) * stepDt * 0.12
+          if (ey > 1.24) {
+            ey = 0.24
+            ex = ((i * 37) % 100) / 100 - 0.5
+          }
+          attr.setXYZ(i, ex, ey, attr.getZ(i))
+        }
+        attr.needsUpdate = true
+      }
+
+      if (built.nookCandleLight && !reducedMotion) {
+        const baseIntensity = mood === 'afternoon' ? 2.6 : 6.4
+        built.nookCandleLight.intensity =
+          baseIntensity * (0.92 + Math.sin(now * 0.009) * 0.07 + Math.cos(now * 0.023) * 0.04)
+      }
+
+      // Smooth rolling bookshelf ladders gliding on tubular brass tracks
+      for (const rig of built.rollingLadders) {
+        if (Math.abs(rig.currentOffset - rig.targetOffset) > 0.004) {
+          rig.currentOffset = THREE.MathUtils.damp(rig.currentOffset, rig.targetOffset, 6.5, dt)
+          if (rig.axis === 'x') {
+            rig.group.position.x = rig.currentOffset
+          } else {
+            rig.group.position.z = rig.currentOffset
+          }
+        }
+      }
+
+      // Passive Hall Discovery checks (walking onto wide mezzanine or into Secret Study Nook)
+      if (!tourActiveRef.current) {
+        if (playerFloor.y >= GALLERY_Y - 0.25) {
+          useScholarStore.getState().recordDiscovery('mezzanine', 'Wide Upper Gallery')
+        }
+        if (isInsideSecretNook(playerFloor)) {
+          useScholarStore.getState().recordDiscovery('secret-nook', 'Secret Upper Study Nook')
+        }
       }
 
       // Stormy Night animated rain streaks & subtle distant lightning shimmer
@@ -1925,7 +2356,8 @@ export function RoomView({ library }: Props) {
           drawCalls: renderer.info.render.calls,
           triangles: renderer.info.render.triangles,
           books: built.placements.length,
-          bookBatches: built.bookMesh ? 1 : 0
+          bookBatches: built.bookMesh ? 1 : 0,
+          qualityTier: governor.getTier()
         }
         ;(window as unknown as { __alexandriaRoomStats?: () => RoomStats }).__alexandriaRoomStats =
           () => snapshot
@@ -1937,12 +2369,16 @@ export function RoomView({ library }: Props) {
     }
 
     placeArrivingBook()
-    tick()
+    if (!document.hidden) {
+      tick()
+    }
 
     return () => {
       disposed = true
       cancelAnimationFrame(frameId)
       clearTimeout(frameId)
+      unsubPlayer()
+      unsubAmbient()
       observer.disconnect()
       if (navigateTimer) clearTimeout(navigateTimer)
       if (document.pointerLockElement === renderer.domElement) {
@@ -1950,6 +2386,9 @@ export function RoomView({ library }: Props) {
       }
       renderer.domElement.removeEventListener('pointerdown', onPointerDown)
       renderer.domElement.removeEventListener('dblclick', onDoubleClick)
+      renderer.domElement.removeEventListener('touchstart', onTouchStart)
+      renderer.domElement.removeEventListener('touchmove', onTouchMove)
+      renderer.domElement.removeEventListener('touchend', onTouchEnd)
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', onPointerUp)
       renderer.domElement.removeEventListener('wheel', onWheel)
@@ -1962,6 +2401,7 @@ export function RoomView({ library }: Props) {
       window.removeEventListener('keyup', onKeyUp, true)
       window.removeEventListener('blur', onWindowBlur)
       input.clear()
+      touchMoveRef.current = { forward: 0, right: 0 }
       clearKeysRef.current = null
 
       hoverBoxGeo.dispose()
@@ -2067,15 +2507,36 @@ export function RoomView({ library }: Props) {
     <div className="room room--scene">
       <div className="room__canvas" ref={mountRef} />
 
-      {contextLost ? (
+      {webglStatus !== 'ok' ? (
         <div className="room__fallback">
-          <p className="room__fallback-title">3D viewport paused</p>
-          <p className="room__fallback-body">
-            Your browser reset WebGL. You can keep reading from the Index or reload the room.
+          <p className="room__fallback-title">
+            {webglStatus === 'unavailable'
+              ? '3D Grand Hall Unavailable in This Browser'
+              : '3D viewport paused'}
           </p>
-          <button className="button" type="button" onClick={() => navigate('index')}>
-            Open Index
-          </button>
+          <p className="room__fallback-body">
+            {webglStatus === 'unavailable'
+              ? 'Hardware WebGL2 acceleration is disabled in this environment. You can still explore every shelf, book, PDF reader tool, study timer, and Scholar Ledger below.'
+              : 'Your browser reset WebGL. You can keep reading from the Index or Floor Plan while graphics recover.'}
+          </p>
+          <div className="dialog__actions">
+            <button className="button" type="button" onClick={() => navigate('map')}>
+              Open 2D Floor Plan
+            </button>
+            <button className="button button--quiet" type="button" onClick={() => navigate('index')}>
+              Open Library Index
+            </button>
+            <button
+              className="button button--quiet"
+              type="button"
+              onClick={() => {
+                setDeskInitialTab('desk')
+                setDeskOpen(true)
+              }}
+            >
+              Open Reading Desk
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -2347,11 +2808,50 @@ export function RoomView({ library }: Props) {
             className={`game-dock__btn ${studyRunning ? 'game-dock__btn--active' : ''}`}
             onClick={(e) => {
               e.currentTarget.blur()
+              setDeskInitialTab('desk')
               setDeskOpen(true)
             }}
             title="Reading Desk, Inbox & Study Tracker"
           >
             {studyRunning ? `Desk · ${studyDisplay}` : `Desk${inboxCount > 0 ? ` (${inboxCount})` : ''}`}
+          </button>
+
+          <button
+            type="button"
+            className={`game-dock__btn ${deskOpen && deskInitialTab === 'ledger' ? 'game-dock__btn--active' : ''}`}
+            onClick={(e) => {
+              e.currentTarget.blur()
+              setDeskInitialTab('ledger')
+              setDeskOpen(true)
+            }}
+            title={`Scholar Ledger · ${scholarRank.current.title} (${scholarXp} XP)`}
+          >
+            Ledger · {scholarRank.current.crest}
+          </button>
+
+          <button
+            type="button"
+            className={`game-dock__btn ${tourActive ? 'game-dock__btn--active' : ''}`}
+            onClick={(e) => {
+              e.currentTarget.blur()
+              playSound('tick')
+              if (tourActive) {
+                setTourActive(false)
+                setTourPaused(false)
+              } else {
+                setPlacesOpen(false)
+                setAtmosphereOpen(false)
+                setDeskOpen(false)
+                openShelf(null)
+                setTourStopIndex(0)
+                setTourPaused(false)
+                setTourActive(true)
+                useScholarStore.getState().recordDiscovery('grand-tour', 'Guided Grand Hall Tour')
+              }
+            }}
+            title="Cinematic Guided Grand Hall Tour"
+          >
+            {tourActive ? 'End Tour' : 'Tour'}
           </button>
 
           <button
@@ -2423,6 +2923,7 @@ export function RoomView({ library }: Props) {
             className="game-dock__btn"
             onClick={(e) => {
               e.currentTarget.blur()
+              setTourActive(false)
               resetViewRef.current?.()
             }}
             title="Return to Grand Hall Entrance (R)"
@@ -2458,9 +2959,52 @@ export function RoomView({ library }: Props) {
         </div>
 
         <p className="game-dock__keys" aria-hidden="true">
-          WASD Move · Drag Look · Double-Click Floor · Click Book · ? Controls
+          {platform.isTouchPrimary
+            ? 'Thumbstick Move · Drag Look · Pinch Zoom · Tap Books & Landmarks'
+            : `WASD Move · Drag Look · Double-Click Floor · ${formatShortcut('K', platform)} Search · ? Controls`}
         </p>
       </div>
+
+      {platform.isTouchPrimary && webglStatus === 'ok' && !deskOpen && openShelfId === null ? (
+        <TouchMovePad
+          onVectorChange={(vector) => {
+            touchMoveRef.current = vector
+          }}
+        />
+      ) : null}
+
+      {tourActive ? (
+        <HallTourOverlay
+          stopIndex={tourStopIndex}
+          paused={tourPaused}
+          onPrev={() => setTourStopIndex((idx) => Math.max(0, idx - 1))}
+          onNext={() => setTourStopIndex((idx) => Math.min(HALL_TOUR_STOPS.length - 1, idx + 1))}
+          onTogglePause={() => setTourPaused((p) => !p)}
+          onExit={() => {
+            setTourActive(false)
+            setTourPaused(false)
+          }}
+        />
+      ) : null}
+
+      {scholarToast ? (
+        <div
+          className="scholar-toast"
+          role="status"
+          onClick={() => {
+            clearScholarToast()
+            setDeskInitialTab('ledger')
+            setDeskOpen(true)
+          }}
+        >
+          <span className="scholar-toast__crest">{scholarRank.current.crest}</span>
+          <div className="scholar-toast__body">
+            <span className="scholar-toast__kicker">{scholarToast.subtitle}</span>
+            <strong className="scholar-toast__title">{scholarToast.title}</strong>
+          </div>
+          <span className="scholar-toast__xp">+{scholarToast.xp} XP</span>
+        </div>
+      ) : null}
 
       {openShelfId !== null ? (
         <ShelfDrawer
@@ -2479,10 +3023,34 @@ export function RoomView({ library }: Props) {
       ) : null}
 
       {deskOpen ? (
-        <DeskDrawer
-          onInspectBook={(book) => setPreviewBook(book)}
-          onClose={() => setDeskOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <DeskDrawer
+            initialTab={deskInitialTab}
+            onInspectBook={(book) => setPreviewBook(book)}
+            onClose={() => setDeskOpen(false)}
+          />
+        </Suspense>
+      ) : null}
+
+      {observatoryOpen ? (
+        <Suspense fallback={null}>
+          <ObservatoryModal
+            mood={mood}
+            onChangeMood={handleChangeMood}
+            onClose={() => setObservatoryOpen(false)}
+          />
+        </Suspense>
+      ) : null}
+
+      {atlasOpen ? (
+        <Suspense fallback={null}>
+          <AtlasWayfinderModal
+            anchors={anchorList}
+            totalBooks={totalBooks}
+            onJump={(anchorId) => jumpToAnchorRef.current?.(anchorId)}
+            onClose={() => setAtlasOpen(false)}
+          />
+        </Suspense>
       ) : null}
 
       {previewBook ? (

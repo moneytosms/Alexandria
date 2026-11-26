@@ -1,5 +1,6 @@
 import type { SearchHit } from '@shared/types'
 import { useEffect, useRef, useState } from 'react'
+import { formatShortcut, usePlatformCapabilities } from '../platform'
 import { navigate } from '../router'
 import { useReaderStore } from '../state/reader-store'
 import { useUiStore } from '../state/ui-store'
@@ -14,6 +15,7 @@ export function SearchOverlay() {
   const open = useUiStore((state) => state.searchOpen)
   const setOpen = useUiStore((state) => state.setSearchOpen)
   const openBook = useReaderStore((state) => state.open)
+  const platform = usePlatformCapabilities()
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState<SearchHit[]>([])
   const [took, setTook] = useState(0)
@@ -21,6 +23,7 @@ export function SearchOverlay() {
   const [active, setActive] = useState(0)
   const [busy, setBusy] = useState(false)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const requestSeqRef = useRef(0)
 
   useEffect(() => {
     if (!open) return
@@ -43,13 +46,13 @@ export function SearchOverlay() {
       return
     }
 
-    let cancelled = false
+    const seq = ++requestSeqRef.current
     const timer = window.setTimeout(() => {
       setBusy(true)
       void window.alexandria
         .search(trimmed)
         .then((result) => {
-          if (cancelled) return
+          if (requestSeqRef.current !== seq) return
           setHits(result.hits)
           setTook(result.tookMs)
           setTruncated(result.truncated)
@@ -57,12 +60,11 @@ export function SearchOverlay() {
         })
         .catch(() => undefined)
         .finally(() => {
-          if (!cancelled) setBusy(false)
+          if (requestSeqRef.current === seq) setBusy(false)
         })
-    }, 180)
+    }, 120)
 
     return () => {
-      cancelled = true
       window.clearTimeout(timer)
     }
   }, [query, open])
@@ -134,7 +136,8 @@ export function SearchOverlay() {
             <div className="search-palette__hint">
               <p>Search across every indexed page, title, author, and note.</p>
               <p className="search-palette__keys">
-                <kbd>↑</kbd> <kbd>↓</kbd> to move · <kbd>↵</kbd> to open · <kbd>⌘K</kbd> anywhere
+                <kbd>↑</kbd> <kbd>↓</kbd> to move · <kbd>↵</kbd> to open ·{' '}
+                <kbd>{formatShortcut('K', platform)}</kbd> anywhere
               </p>
             </div>
           ) : hits.length === 0 ? (

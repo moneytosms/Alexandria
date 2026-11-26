@@ -20,7 +20,7 @@ import {
   type ReleasePayload
 } from '../lib/releases'
 
-type PlatformTab = 'linux' | 'windows' | 'macos'
+type PlatformTab = 'linux' | 'windows' | 'macos' | 'android'
 
 interface ChapterDef {
   id: string
@@ -39,7 +39,8 @@ const CHAPTERS: ChapterDef[] = [
 const PLATFORM_TABS: Array<{ id: PlatformTab; label: string; arch: string }> = [
   { id: 'linux', label: 'Linux', arch: 'x64 · AppImage & .deb' },
   { id: 'windows', label: 'Windows', arch: 'x64 · Installer & Portable' },
-  { id: 'macos', label: 'macOS', arch: 'Apple Silicon · .dmg & .zip' }
+  { id: 'macos', label: 'macOS', arch: 'Apple Silicon · .dmg & .zip' },
+  { id: 'android', label: 'Android', arch: 'APK · Android 8.0+ Universal' }
 ]
 
 const HALL_MOODS: Array<{ id: HallMoodPreview; label: string; note: string }> = [
@@ -174,14 +175,30 @@ export function LandingApp() {
 
     let rafId = 0
     const onRaf = (time: number): void => {
+      if (document.hidden) {
+        rafId = 0
+        return
+      }
       lenis.raf(time)
       syncScroll()
       rafId = window.requestAnimationFrame(onRaf)
     }
-    rafId = window.requestAnimationFrame(onRaf)
+    const onVisibilityChange = (): void => {
+      if (document.hidden) {
+        window.cancelAnimationFrame(rafId)
+        rafId = 0
+      } else if (rafId === 0) {
+        rafId = window.requestAnimationFrame(onRaf)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    if (!document.hidden) {
+      rafId = window.requestAnimationFrame(onRaf)
+    }
 
     return () => {
       window.cancelAnimationFrame(rafId)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       lenis.destroy()
       lenisRef.current = null
       window.removeEventListener('scroll', syncScroll)
@@ -208,7 +225,9 @@ export function LandingApp() {
       ? 'certutil -hashfile Alexandria-*.exe SHA256'
       : selectedTab === 'macos'
         ? 'shasum -a 256 -c SHA256SUMS.txt'
-        : 'sha256sum -c SHA256SUMS.txt && chmod +x Alexandria-*.AppImage'
+        : selectedTab === 'android'
+          ? 'sha256sum -c SHA256SUMS.txt # then open Alexandria-*.apk on Android'
+          : 'sha256sum -c SHA256SUMS.txt && chmod +x Alexandria-*.AppImage'
 
   const copyVerifyCommand = (): void => {
     if (!navigator.clipboard) return

@@ -1,0 +1,35 @@
+import type { CapacitorConfig } from '@capacitor/cli'
+
+const config: CapacitorConfig = {
+  appId: 'dev.sms.alexandria',
+  appName: 'Alexandria',
+  webDir: 'dist-android',
+  backgroundColor: '#0c0a09',
+  server: {
+    androidScheme: 'https',
+    cleartext: false
+  },
+  android: {
+    backgroundColor: '#0c0a09',
+    allowMixedContent: false,
+    captureInput: true,
+    webContentsDebuggingEnabled: false
+  },
+  plugins: {
+    SplashScreen: {
+      launchShowDuration: 600,
+      launchAutoHide: true,
+      backgroundColor: '#0c0a09',
+      androidSplashResourceName: 'splash',
+      androidScaleType: 'CENTER_CROP',
+      showSpinner: false
+    },
+    StatusBar: {
+      style: 'DARK',
+      backgroundColor: '#0c0a09',
+      overlaysWebView: false
+    }
+  }
+}
+
+export default config

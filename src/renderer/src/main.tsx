@@ -10,6 +10,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import { ErrorBoundary } from './ErrorBoundary'
 import { installGlobalErrorLogging } from './errors'
+import { initNativeAndroid } from './native-android'
 import './styles.css'
 
 const root = document.getElementById('root')
@@ -19,6 +20,7 @@ if (!root) {
 }
 
 installGlobalErrorLogging()
+initNativeAndroid()
 
 createRoot(root).render(
   <StrictMode>

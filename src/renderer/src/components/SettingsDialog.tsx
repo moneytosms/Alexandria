@@ -1,32 +1,37 @@
 import type { AppInfo, LibraryHealth, LibraryInfo } from '@shared/api'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { formatShortcut, usePlatformCapabilities } from '../platform'
 import { useLibraryStore } from '../state/library-store'
 import { useSettingsStore } from '../state/settings-store'
 import { usePlayerStore, useUiStore } from '../state/ui-store'
+import { isDemoBridgeActive, resetStaticDemoLibrary } from '../static-demo-bridge'
 
 interface Props {
   library: LibraryInfo | null
 }
 
-const shortcuts: Array<[string, string]> = [
-  ['Ctrl / Cmd + K', 'Search the library'],
-  ['← / →, PgUp / PgDn', 'Turn pages'],
-  ['Home / End', 'First / last page'],
-  ['+ / -', 'Zoom in / out'],
-  ['F', 'Full screen'],
-  ['B', 'Bookmark this page'],
-  ['H', 'Highlight tool'],
-  ['I', 'Ink tool'],
-  ['E', 'Eraser'],
-  ['S', 'Two-page spread'],
-  ['Ctrl / Cmd + Z', 'Undo ink'],
-  ['Ctrl / Cmd + F', 'Search inside the book'],
-  ['?', 'Reader shortcut list'],
-  ['Esc', 'Close the reader sidebar'],
-  ['Ctrl / Cmd + ,', 'Open settings']
-]
-
 export function SettingsDialog({ library }: Props) {
+  const platform = usePlatformCapabilities()
+  const shortcuts = useMemo<Array<[string, string]>>(
+    () => [
+      [formatShortcut('K', platform), 'Search the library'],
+      ['← / →, PgUp / PgDn', 'Turn pages'],
+      ['Home / End', 'First / last page'],
+      ['+ / -', 'Zoom in / out'],
+      ['F', 'Full screen'],
+      ['B', 'Bookmark this page'],
+      ['H', 'Highlight tool'],
+      ['I', 'Ink tool'],
+      ['E', 'Eraser'],
+      ['S', 'Two-page spread'],
+      [formatShortcut('Z', platform), 'Undo ink'],
+      [formatShortcut('F', platform), 'Search inside the book'],
+      ['?', 'Reader shortcut list'],
+      ['Esc', 'Close the reader sidebar'],
+      [formatShortcut(',', platform), 'Open settings']
+    ],
+    [platform]
+  )
   const open = useUiStore((state) => state.settingsOpen)
   const setOpen = useUiStore((state) => state.setSettingsOpen)
   const values = useSettingsStore((state) => state.values)
@@ -159,6 +164,16 @@ export function SettingsDialog({ library }: Props) {
               <button className="button button--quiet" type="button" onClick={() => void exportLibrary()} disabled={busy}>
                 Export catalogue
               </button>
+              {isDemoBridgeActive() ? (
+                <button
+                  className="button button--quiet"
+                  type="button"
+                  onClick={() => void resetStaticDemoLibrary()}
+                  disabled={busy}
+                >
+                  Reset demo library
+                </button>
+              ) : null}
             </div>
           </section>
 
@@ -191,10 +206,10 @@ export function SettingsDialog({ library }: Props) {
             <label className="field">
               <span>3D quality</span>
               <select value={setting('ui.quality', 'auto')} onChange={(event) => change('ui.quality', event.target.value)}>
-                <option value="auto">Automatic</option>
+                <option value="auto">Automatic — adaptive FPS scaling</option>
                 <option value="low">Low — no shadows</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
+                <option value="medium">Medium — balanced</option>
+                <option value="high">High — full detail</option>
               </select>
             </label>
             <label className="settings__check">
